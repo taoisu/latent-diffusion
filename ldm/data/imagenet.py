@@ -12,6 +12,7 @@ import numpy as np
 import taming.data.utils as tdu
 import torchvision.transforms.functional as TF
 
+from abc import ABC, abstractmethod
 from omegaconf import OmegaConf
 from functools import partial
 from tqdm import tqdm
@@ -405,3 +406,91 @@ class ImageNetSRValidation(ImageNetSR):
             indices = pickle.load(f)
         dset = ImageNetValidation(process_images=False,)
         return Subset(dset, indices)
+
+
+class ImageNetPatchInpaint(Dataset, ABC):
+
+    def __init__(
+        self,
+        size:int,
+        min_patch_f: float,
+        max_patch_f: float,
+        min_crop_f:float,
+        max_crop_f:float,
+        center_crop:bool
+    ):
+        super().__init__()
+        self.img_rescler = al.SmallestMaxSize(max_size=size, interpolation=cv2.INTER_AREA)
+        self.min_crop_f = min_crop_f
+        self.max_crop_f = max_crop_f
+        self.min_patch_f = min_patch_f
+        self.max_patch_f = max_patch_f
+        self.center_crop = center_crop
+        self.size = size
+        self.base = self.get_base()
+
+    @abstractmethod
+    def get_base(self) -> ImageNetBase:
+        '''get the data'''
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, i:int):
+        item = self.base[i]
+        img = Image.open(item['file_path_'])
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+        img = np.array(img).astype(np.uint8)
+
+        min_crop_f, max_crop_f = self.min_crop_f, self.max_crop_f
+        min_side_len = min(img.shape[-2:])
+        crop_side_len = min_side_len * np.random.uniform(min_crop_f, max_crop_f, size=None)
+        crop_side_len = int(crop_side_len)
+
+        crop_cls = al.CenterCrop if self.center_crop else al.RandomCrop
+        self.cropper = crop_cls(height=crop_side_len, width=crop_side_len)
+
+        img = self.cropper(image=img)['image']
+        img = self.img_rescler(image=img)['image']
+
+        min_patch_f, max_patch_f = self.min_patch_f, self.max_patch_f
+        patch_height = self.size * np.random.uniform(min_patch_f, max_patch_f, size=None)
+        patch_height = int(patch_height)
+        patch_width = self.size * np.random.uniform(min_patch_f, max_patch_f, size=None)
+        patch_width = int(patch_width)
+        x1, x2, y1, y2 = al.get_random_crop_coords(
+            self.size, self.size, patch_height, patch_width, 0, 0
+        )
+        patch = img[y1:y2, x1:x2]
+        mask_img = np.copy(img)
+        mask_img[y1:y2, x1:x2] = 0
+
+        item['img_origin'] = img
+        item['img_masked'] = mask_img
+        item['img_patch'] = patch
+        return item
+
+
+class ImageNetPatchInpaintTrain(ImageNetPatchInpaint):
+
+    def __init__(
+        self,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+
+    def get_base(self) -> ImageNetBase:
+        return ImageNetTrain(process_images=False)
+
+
+class ImageNetPatchInpaintValidation(ImageNetPatchInpaint):
+
+    def __init__(
+        self,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+
+    def get_base(self) -> ImageNetBase:
+        return ImageNetValidation(process_images=False)
