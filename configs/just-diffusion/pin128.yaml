@@ -1,0 +1,63 @@
+model:
+  base_learning_rate: 1.0e-06
+  target: ldm.models.diffusion.ddpm.LatentDiffusion
+  params:
+    linear_start: 0.0015
+    linear_end: 0.0195
+    num_timesteps_cond: 1
+    log_every_t: 200
+    timesteps: 1000
+    first_stage_key: image
+    cond_stage_key: patch
+    image_size: 128
+    channels: 7
+    cond_stage_trainable: false
+    conditioning_key: crossattn
+    monitor: val/loss_simple_ema
+    unet_config:
+      target: ldm.modules.diffusionmodules.imagenmodel.EfficientUNetModel
+      params:
+        in_channels: 7
+        out_channels: 3
+        model_channels: 256
+        attention_resolutions: [8, 16]
+        num_res_blocks: 2
+        channel_mult: [1, 2, 3, 4, 5]
+        num_heads: 8
+        resblock_updown: true
+    first_stage_config:
+      target: ldm.models.autoencoder.IdentityFirstStage
+    cond_stage_config:
+      target: ldm.modules.encoders.modules.CLIPPatchEmbedder
+      params:
+        pretrained_model_name: ViT-B/32
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 2
+    num_workers: 4
+    train:
+      target: ldm.data.imagenet.ImageNetPatchInpaintTrain
+      params:
+        config:
+          size: 128
+          min_patch_f: 0.125
+          max_patch_f: 0.25
+          min_crop_f: 0.5
+          max_crop_f: 1.0
+          random_crop: true
+    validation:
+      target: ldm.data.imagenet.ImageNetPatchInpaintValidation
+      params:
+        config:
+          size: 128
+          min_patch_f: 0.125
+          max_patch_f: 0.25
+          min_crop_f: 0.5
+          max_crop_f: 1.0
+          random_crop: true
+lightning:
+  trainer:
+    benchmark: True
+    max_epochs: -1
+    find_unused_parameters: True

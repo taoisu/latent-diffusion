@@ -1,3 +1,4 @@
+import clip
 import torch
 import torch.nn as nn
 
@@ -19,12 +20,12 @@ class AbstractEncoder(nn.Module):
 
 class ClassEmbedder(nn.Module):
 
-    def __init__(self, embed_dim: int, n_classes: int = 1000, key: str = 'class'):
+    def __init__(self, embed_dim:int, n_classes:int=1000, key:str='class'):
         super().__init__()
         self.key = key
         self.embedding = nn.Embedding(n_classes, embed_dim)
 
-    def forward(self, batch: Tensor, key: str = None):
+    def forward(self, batch:Tensor, key:str=None):
         if key is None:
             key = self.key
         # this is for use in crossattn
@@ -51,14 +52,37 @@ class TransformerEmbedder(AbstractEncoder):
         return self(x)
 
 
+class CLIPPatchEmbedder(AbstractEncoder):
+
+    def __init__(
+        self,
+        pretrained_model_name:str,
+        device='cpu',
+    ):
+        super().__init__()
+        model, preprocess = clip.load(pretrained_model_name, device)
+        self.model = model
+        self.preprocess = preprocess
+
+    def forward(self, batch:Tensor, key:str):
+        x = batch[key]
+        h = self.preprocess(x)
+        h = self.model(h)
+        return h
+
+    @torch.no_grad()
+    def encode(self, batch:Tensor, key:str):
+        return self(batch, key)
+
+
 class BERTTokenizer(AbstractEncoder):
 
     """ Uses a pretrained BERT tokenizer by huggingface. Vocab size: 30522 (?)"""
     def __init__(
         self,
-        device: str = "cuda",
-        vq_interface: bool = True,
-        max_length: int = 77,
+        device:str="cuda",
+        vq_interface:bool=True,
+        max_length:int=77,
     ):
         super().__init__()
         from transformers import BertTokenizerFast
@@ -67,7 +91,7 @@ class BERTTokenizer(AbstractEncoder):
         self.vq_interface = vq_interface
         self.max_length = max_length
 
-    def forward(self, text: str):
+    def forward(self, text:str):
         batch_encoding = self.tokenizer(
             text,
             truncation=True,
@@ -80,13 +104,13 @@ class BERTTokenizer(AbstractEncoder):
         return tokens
 
     @torch.no_grad()
-    def encode(self, text: str):
+    def encode(self, text:str):
         tokens = self(text)
         if not self.vq_interface:
             return tokens
         return None, None, [None, None, tokens]
 
-    def decode(self, text: str):
+    def decode(self, text:str):
         return text
 
 
@@ -95,13 +119,13 @@ class BERTEmbedder(AbstractEncoder):
 
     def __init__(
         self,
-        n_embed: int,
-        n_layer: int,
-        vocab_size: int = 30522,
-        max_seq_len: int = 77,
-        device: str = "cuda",
-        use_tokenizer: bool = True,
-        embedding_dropout: float = 0.0,
+        n_embed:int,
+        n_layer:int,
+        vocab_size:int=30522,
+        max_seq_len:int=77,
+        device:str="cuda",
+        use_tokenizer:bool=True,
+        embedding_dropout:float=0.0,
     ):
         super().__init__()
         self.use_tknz_fn = use_tokenizer
@@ -116,7 +140,7 @@ class BERTEmbedder(AbstractEncoder):
             attn_layers=Encoder(dim=n_embed, depth=n_layer),
             emb_dropout=embedding_dropout)
 
-    def forward(self, text: str):
+    def forward(self, text:str):
         if self.use_tknz_fn:
             tokens = self.tknz_fn(text)#.to(self.device)
         else:
@@ -124,7 +148,7 @@ class BERTEmbedder(AbstractEncoder):
         z = self.transformer(tokens, return_embeddings=True)
         return z
 
-    def encode(self, text: str):
+    def encode(self, text:str):
         # output of length 77
         return self(text)
 

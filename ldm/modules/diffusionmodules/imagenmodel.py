@@ -11,7 +11,7 @@ from ldm.modules.diffusionmodules.util import linear, zero_module
 from ldm.modules.diffusionmodules.util import conv_nd, normalization, timestep_embedding
 
 
-class ContextUNetModel(nn.Module):
+class EfficientUNetModel(nn.Module):
     '''
     The full UNet model with attention and timestep embedding.
 
@@ -339,7 +339,7 @@ class ContextUNetModel(nn.Module):
 
 if __name__ == '__main__':
     device = th.device('cuda')
-    model = ContextUNetModel(
+    model = EfficientUNetModel(
         in_channels=3,
         model_channels=256,
         out_channels=3,
