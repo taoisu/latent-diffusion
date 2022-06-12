@@ -6,6 +6,7 @@ import sys
 import traceback
 import time
 import torch
+import torch as th
 import torchvision
 
 import numpy as np
@@ -14,6 +15,7 @@ import pytorch_lightning as pl
 from functools import partial
 from omegaconf import OmegaConf
 from packaging import version
+from pytorch_lightning import LightningModule as Lit
 from torch.utils.data import random_split, DataLoader, Dataset, Subset
 from typing import Dict, Any
 from PIL import Image
@@ -25,6 +27,7 @@ from pytorch_lightning.utilities.distributed import rank_zero_only
 from pytorch_lightning.utilities import rank_zero_info
 
 from ldm.data.base import Txt2ImgIterableBaseDataset
+from ldm.data.imagenet import ImageNetPatchInpaint
 from ldm.util import instantiate_from_config
 
 
@@ -170,16 +173,16 @@ class DataModuleFromConfig(pl.LightningDataModule):
 
     def __init__(
         self,
-        batch_size: int,
-        train: Dict = None,
-        validation: Dict = None,
-        test: Dict = None,
-        predict: Dict = None,
-        wrap: bool = False,
-        num_workers: int = None,
-        shuffle_test_loader: bool = False,
-        use_worker_init_fn: bool = False,
-        shuffle_val_dataloader: bool = False,
+        batch_size:int,
+        train:Dict=None,
+        validation:Dict=None,
+        test:Dict=None,
+        predict:Dict=None,
+        wrap:bool=False,
+        num_workers:int=None,
+        shuffle_test_loader:bool=False,
+        use_worker_init_fn:bool=False,
+        shuffle_val_dataloader:bool=False,
     ):
         super().__init__()
         self.batch_size = batch_size
@@ -204,7 +207,7 @@ class DataModuleFromConfig(pl.LightningDataModule):
         for data_cfg in self.dataset_configs.values():
             instantiate_from_config(data_cfg)
 
-    def setup(self, stage: str = None):
+    def setup(self, stage:str=None):
         self.datasets = dict(
             (k, instantiate_from_config(self.dataset_configs[k]))
             for k in self.dataset_configs)
@@ -225,7 +228,7 @@ class DataModuleFromConfig(pl.LightningDataModule):
             shuffle=False if is_iterable_dataset else True,
             worker_init_fn=init_fn)
 
-    def _val_dataloader(self, shuffle: bool = False):
+    def _val_dataloader(self, shuffle:bool=False):
         if isinstance(self.datasets['validation'], Txt2ImgIterableBaseDataset) or self.use_worker_init_fn:
             init_fn = worker_init_fn
         else:
@@ -237,7 +240,7 @@ class DataModuleFromConfig(pl.LightningDataModule):
             worker_init_fn=init_fn,
             shuffle=shuffle)
 
-    def _test_dataloader(self, shuffle: bool = False):
+    def _test_dataloader(self, shuffle:bool=False):
         is_iterable_dataset = isinstance(self.datasets['train'], Txt2ImgIterableBaseDataset)
         if is_iterable_dataset or self.use_worker_init_fn:
             init_fn = worker_init_fn
@@ -247,10 +250,15 @@ class DataModuleFromConfig(pl.LightningDataModule):
         # do not shuffle dataloader for iterable dataset
         shuffle = shuffle and (not is_iterable_dataset)
 
-        return DataLoader(self.datasets["test"], batch_size=self.batch_size,
-                          num_workers=self.num_workers, worker_init_fn=init_fn, shuffle=shuffle)
+        return DataLoader(
+            self.datasets["test"],
+            batch_size=self.batch_size,
+            num_workers=self.num_workers,
+            worker_init_fn=init_fn,
+            shuffle=shuffle,
+            collate_fn=None)
 
-    def _predict_dataloader(self, shuffle: bool = False):
+    def _predict_dataloader(self, shuffle:bool=False):
         if isinstance(self.datasets['predict'], Txt2ImgIterableBaseDataset) or self.use_worker_init_fn:
             init_fn = worker_init_fn
         else:
@@ -266,13 +274,13 @@ class SetupCallback(Callback):
 
     def __init__(
         self,
-        resume: str,
-        now: str,
-        logdir: str,
-        ckptdir: str,
-        cfgdir: str,
-        config: Dict,
-        lightning_config: Dict,
+        resume:str,
+        now:str,
+        logdir:str,
+        ckptdir:str,
+        cfgdir:str,
+        config:Dict,
+        lightning_config:Dict,
     ):
         super().__init__()
         self.resume = resume
@@ -283,13 +291,13 @@ class SetupCallback(Callback):
         self.config = config
         self.lightning_config = lightning_config
 
-    def on_exception(self, trainer: Trainer, pl_module: pl.LightningModule, exception: BaseException):
+    def on_exception(self, trainer:Trainer, pl_module:Lit, exception:BaseException):
         if trainer.global_rank == 0:
             print("Summoning checkpoint.")
             ckpt_path = os.path.join(self.ckptdir, "last.ckpt")
             trainer.save_checkpoint(ckpt_path)
 
-    def on_fit_start(self, trainer: Trainer, pl_module: pl.LightningModule):
+    def on_fit_start(self, trainer:Trainer, pl_module:Lit):
         if trainer.global_rank == 0:
             # Create logdirs and save configs
             os.makedirs(self.logdir, exist_ok=True)
@@ -326,15 +334,15 @@ class ImageLogger(Callback):
 
     def __init__(
         self,
-        batch_frequency: int,
-        max_images: int,
-        clamp: bool = True,
-        increase_log_steps: bool = True,
-        rescale: bool = True,
-        disabled: bool = False,
-        log_on_batch_idx: bool = False,
-        log_first_step: bool = False,
-        log_images_kwargs: Dict = None,
+        batch_frequency:int,
+        max_images:int,
+        clamp:bool=True,
+        increase_log_steps:bool=True,
+        rescale:bool=True,
+        disabled:bool=False,
+        log_on_batch_idx:bool=False,
+        log_first_step:bool=False,
+        log_images_kwargs:Dict=None,
     ):
         super().__init__()
         self.rescale = rescale
@@ -353,7 +361,7 @@ class ImageLogger(Callback):
         self.log_first_step = log_first_step
 
     @rank_zero_only
-    def _tensorboard(self, pl_module, images, batch_idx, split):
+    def _tensorboard(self, pl_module:Lit, images:th.Tensor, batch_idx:int, split:str):
         for k in images:
             grid = torchvision.utils.make_grid(images[k])
             grid = (grid + 1.0) / 2.0  # -1,1 -> 0,1; c,h,w
@@ -364,8 +372,15 @@ class ImageLogger(Callback):
                 global_step=pl_module.global_step)
 
     @rank_zero_only
-    def log_local(self, save_dir, split, images,
-                  global_step, current_epoch, batch_idx):
+    def log_local(
+        self,
+        save_dir,
+        split,
+        images,
+        global_step,
+        current_epoch,
+        batch_idx
+    ):
         root = os.path.join(save_dir, "images", split)
         for k in images:
             grid = torchvision.utils.make_grid(images[k], nrow=4)
@@ -383,7 +398,7 @@ class ImageLogger(Callback):
             os.makedirs(os.path.split(path)[0], exist_ok=True)
             Image.fromarray(grid).save(path)
 
-    def log_img(self, pl_module: pl.LightningModule, batch: Dict, batch_idx: int, split: str = "train"):
+    def log_img(self, pl_module:Lit, batch:Dict, batch_idx:int, split:str="train"):
         check_idx = batch_idx if self.log_on_batch_idx else pl_module.global_step
         if (self.check_frequency(check_idx) and  # batch_idx % self.batch_freq == 0
                 hasattr(pl_module, "log_images") and
@@ -420,7 +435,7 @@ class ImageLogger(Callback):
             if is_train:
                 pl_module.train()
 
-    def check_frequency(self, check_idx: int):
+    def check_frequency(self, check_idx:int):
         if ((check_idx % self.batch_freq) == 0 or (check_idx in self.log_steps)) and (
                 check_idx > 0 or self.log_first_step):
             try:
@@ -433,23 +448,23 @@ class ImageLogger(Callback):
 
     def on_train_batch_end(
         self,
-        trainer: Trainer,
-        pl_module: pl.LightningModule,
-        outputs: Any,
-        batch: Dict,
-        batch_idx: int,
+        trainer:Trainer,
+        pl_module:Lit,
+        outputs:Any,
+        batch:Dict,
+        batch_idx:int,
     ):
         if not self.disabled and (pl_module.global_step > 0 or self.log_first_step):
             self.log_img(pl_module, batch, batch_idx, split="train")
 
     def on_validation_batch_end(
         self,
-        trainer: Trainer,
-        pl_module: pl.LightningModule,
-        outputs: Any,
-        batch: Dict,
-        batch_idx: int,
-        dataloader_idx: int,
+        trainer:Trainer,
+        pl_module:Lit,
+        outputs:Any,
+        batch:Dict,
+        batch_idx:int,
+        dataloader_idx:int,
     ):
         if not self.disabled and pl_module.global_step > 0:
             self.log_img(pl_module, batch, batch_idx, split="val")
@@ -461,13 +476,13 @@ class ImageLogger(Callback):
 class CUDACallback(Callback):
 
     # see https://github.com/SeanNaren/minGPT/blob/master/mingpt/callback.py
-    def on_train_epoch_start(self, trainer: Trainer, pl_module: pl.LightningModule):
+    def on_train_epoch_start(self, trainer:Trainer, pl_module:Lit):
         # Reset the memory use counter
         torch.cuda.reset_peak_memory_stats(trainer.strategy.root_device.index)
         torch.cuda.synchronize(trainer.strategy.root_device.index)
         self.start_time = time.time()
 
-    def on_train_epoch_end(self, trainer: Trainer, pl_module: pl.LightningModule):
+    def on_train_epoch_end(self, trainer:Trainer, pl_module:Lit):
         torch.cuda.synchronize(trainer.strategy.root_device.index)
         max_memory = torch.cuda.max_memory_allocated(trainer.strategy.root_device.index) / 2 ** 20
         epoch_time = time.time() - self.start_time
@@ -497,7 +512,7 @@ if __name__ == "__main__":
     # data:
     #   target: main.DataModuleFromConfig
     #   params:
-    #      batch_size: int
+    #      batch_size:int
     #      wrap: bool
     #      train:
     #          target: path to train dataset
@@ -555,7 +570,7 @@ if __name__ == "__main__":
             logdir = opt.resume.rstrip("/")
             ckpt = os.path.join(logdir, "checkpoints", "last.ckpt")
 
-        opt.resume_from_checkpoint = ckpt
+        opt.resume_from_checkpoint=ckpt
         base_configs = sorted(glob.glob(os.path.join(logdir, "configs/*.yaml")))
         opt.base = base_configs + opt.base
         _tmp = logdir.split("/")
@@ -615,7 +630,7 @@ if __name__ == "__main__":
                     "id": nowname,
                 }
             },
-            "testtube": {
+            "tensorboard": {
                 "target": "pytorch_lightning.loggers.TensorBoardLogger",
                 "params": {
                     "name": "tensorboard",
@@ -623,7 +638,7 @@ if __name__ == "__main__":
                 }
             },
         }
-        default_logger_cfg = default_logger_cfgs["testtube"]
+        default_logger_cfg = default_logger_cfgs["tensorboard"]
         if "logger" in lightning_config:
             logger_cfg = lightning_config.logger
         else:
@@ -698,20 +713,19 @@ if __name__ == "__main__":
             callbacks_cfg = OmegaConf.create()
 
         if 'metrics_over_trainsteps_checkpoint' in callbacks_cfg:
-            print(
-                'Caution: Saving checkpoints every n train steps without deleting. This might require some free space.')
+            print('Caution: Saving checkpoints every n train steps without deleting. This might require some free space.')
             default_metrics_over_trainsteps_ckpt_dict = {
-                'metrics_over_trainsteps_checkpoint':
-                    {"target": 'pytorch_lightning.callbacks.ModelCheckpoint',
-                     'params': {
-                         "dirpath": os.path.join(ckptdir, 'trainstep_checkpoints'),
-                         "filename": "{epoch:06}-{step:09}",
-                         "verbose": True,
-                         'save_top_k': -1,
-                         'every_n_train_steps': 10000,
-                         'save_weights_only': True
+                'metrics_over_trainsteps_checkpoint': {
+                    "target": 'pytorch_lightning.callbacks.ModelCheckpoint',
+                    'params': {
+                        "dirpath": os.path.join(ckptdir, 'trainstep_checkpoints'),
+                        "filename": "{epoch:06}-{step:09}",
+                        "verbose": True,
+                        'save_top_k': -1,
+                        'every_n_train_steps': 10000,
+                        'save_weights_only': True
                      }
-                     }
+                }
             }
             default_callbacks_cfg.update(default_metrics_over_trainsteps_ckpt_dict)
 

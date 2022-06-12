@@ -241,16 +241,14 @@ class DDPM(pl.LightningModule):
         return mean, variance, log_variance
 
     def predict_start_from_noise(self, x_t, t, noise):
-        return (
-                extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t -
-                extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise
-        )
+        sqrt_recip_alphas_cumprod_t = extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape)
+        sqrt_recipm1_alphas_cumprod_t = extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+        return sqrt_recip_alphas_cumprod_t * x_t - sqrt_recipm1_alphas_cumprod_t * noise
 
     def q_posterior(self, x_start, x_t, t):
-        posterior_mean = (
-                extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape) * x_start +
-                extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape) * x_t
-        )
+        posterior_mean_coef1_t = extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape)
+        posterior_mean_coef2_t = extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape)
+        posterior_mean = posterior_mean_coef1_t * x_start + posterior_mean_coef2_t * x_t
         posterior_variance = extract_into_tensor(self.posterior_variance, t, x_t.shape)
         posterior_log_variance_clipped = extract_into_tensor(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
@@ -300,8 +298,9 @@ class DDPM(pl.LightningModule):
 
     def q_sample(self, x_start:Tensor, t:Tensor, noise:Tensor=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
-        return (extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
-                extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise)
+        sqrt_alphas_cumprod_t = extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape)
+        sqrt_one_minus_alphas_cumprod_t = extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape)
+        return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
 
     def get_loss(self, pred:Tensor, target:Tensor, mean:bool=True):
         if self.loss_type == 'l1':
@@ -367,7 +366,7 @@ class DDPM(pl.LightningModule):
         return loss, loss_dict
 
     def training_step(self, batch:Dict, batch_idx:int):
-        loss, loss_dict=self.shared_step(batch)
+        loss, loss_dict = self.shared_step(batch)
         self.log_dict(loss_dict, prog_bar=True, logger=True, on_step=True, on_epoch=True)
         self.log("global_step", self.global_step, prog_bar=True, logger=True, on_step=True, on_epoch=False)
 
@@ -732,6 +731,8 @@ class LatentDiffusion(DDPM):
                     xc = batch[cond_key]
                 elif cond_key == 'class_label':
                     xc = batch
+                elif cond_key == 'patch':
+                    xc = batch
                 else:
                     xc = super().get_input(batch, cond_key).to(self.device)
             else:
@@ -958,7 +959,7 @@ class LatentDiffusion(DDPM):
         self,
         x_noisy:Tensor,
         t:Tensor,
-        cond:Tensor,
+        cond:Union[Tensor,Dict],
         return_ids:bool=False,
     ):
         if isinstance(cond, dict):
@@ -1060,8 +1061,9 @@ class LatentDiffusion(DDPM):
             return x_recon
 
     def _predict_eps_from_xstart(self, x_t, t, pred_xstart):
-        return (extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t - pred_xstart) / \
-               extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+        sqrt_recip_alphas_cumprod_t = extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape)
+        sqrt_recipm1_alphas_cumprod_t = extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+        return (sqrt_recip_alphas_cumprod_t * x_t - pred_xstart) / sqrt_recipm1_alphas_cumprod_t
 
     def _prior_bpd(self, x_start):
         """
@@ -1509,8 +1511,8 @@ class DiffusionWrapper(pl.LightningModule):
         self,
         x:Tensor,
         t:Tensor,
-        c_concat:list=None,
-        c_crossattn:list=None,
+        c_concat:List[Tensor]=None,
+        c_crossattn:List[Tensor]=None,
     ):
         if self.conditioning_key is None:
             out = self.diffusion_model(x, t)

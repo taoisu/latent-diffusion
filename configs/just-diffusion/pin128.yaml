@@ -12,19 +12,29 @@ model:
     image_size: 128
     channels: 7
     cond_stage_trainable: false
-    conditioning_key: crossattn
+    conditioning_key: hybrid
     monitor: val/loss_simple_ema
+    scheduler_config: # 10000 warmup steps
+      target: ldm.lr_scheduler.LambdaLinearScheduler
+      params:
+        warm_up_steps: [10000]
+        cycle_lengths: [10000000000000]
+        f_start: [1.e-6]
+        f_max: [1.]
+        f_min: [ 1.]
     unet_config:
       target: ldm.modules.diffusionmodules.imagenmodel.EfficientUNetModel
       params:
         in_channels: 7
         out_channels: 3
         model_channels: 256
-        attention_resolutions: [8, 16]
-        num_res_blocks: 2
-        channel_mult: [1, 2, 3, 4, 5]
+        attention_resolutions: [4, 8]
+        num_res_blocks: [2, 2, 2, 2]
+        channel_mult: [1, 2, 3, 4]
         num_heads: 8
         resblock_updown: true
+        context_dim: 512
+        transformer_depth: 1
     first_stage_config:
       target: ldm.models.autoencoder.IdentityFirstStage
     cond_stage_config:
@@ -35,27 +45,27 @@ data:
   target: main.DataModuleFromConfig
   params:
     batch_size: 2
-    num_workers: 4
+    num_workers: 1
     train:
       target: ldm.data.imagenet.ImageNetPatchInpaintTrain
       params:
-        config:
-          size: 128
-          min_patch_f: 0.125
-          max_patch_f: 0.25
-          min_crop_f: 0.5
-          max_crop_f: 1.0
-          random_crop: true
+        size: 128
+        min_patch_f: 0.125
+        max_patch_f: 0.25
+        min_crop_f: 0.5
+        max_crop_f: 1.0
+        random_crop: true
+        clip_model_name: ViT-B/32
     validation:
       target: ldm.data.imagenet.ImageNetPatchInpaintValidation
       params:
-        config:
-          size: 128
-          min_patch_f: 0.125
-          max_patch_f: 0.25
-          min_crop_f: 0.5
-          max_crop_f: 1.0
-          random_crop: true
+        size: 128
+        min_patch_f: 0.125
+        max_patch_f: 0.25
+        min_crop_f: 0.5
+        max_crop_f: 1.0
+        random_crop: true
+        clip_model_name: ViT-B/32
 lightning:
   trainer:
     benchmark: True
