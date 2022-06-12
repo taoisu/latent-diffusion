@@ -56,11 +56,10 @@ class EfficientUNetModel(nn.Module):
         num_head_channels:int=-1,
         use_scale_shift_norm:bool=False,
         resblock_updown:bool=False,
-        transformer_depth:int=None,
+        transformer_depth:int=1,
         context_dim:Union[int,ListConfig]=None,
     ) -> None:
         super().__init__()
-        assert transformer_depth is not None
         assert context_dim is not None
 
         if type(context_dim) == ListConfig:

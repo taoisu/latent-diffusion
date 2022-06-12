@@ -1,3 +1,4 @@
+import clip
 import cv2
 import glob
 import os
@@ -13,8 +14,10 @@ import taming.data.utils as tdu
 import torchvision.transforms.functional as TF
 
 from abc import ABC, abstractmethod
+from einops import rearrange
 from omegaconf import OmegaConf
 from functools import partial
+from random import random
 from tqdm import tqdm
 from torch.utils.data import Dataset, Subset
 from PIL import Image
@@ -40,7 +43,7 @@ def synset2idx(path_to_yaml: str = "data/index_synset.yaml"):
 
 class ImageNetBase(Dataset):
 
-    def __init__(self, config: Dict = None):
+    def __init__(self, config:Dict=None):
         self.config = config or OmegaConf.create()
         if not type(self.config)==dict:
             self.config = OmegaConf.to_container(self.config)
@@ -55,7 +58,7 @@ class ImageNetBase(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, i: int):
+    def __getitem__(self, i:int):
         return self.data[i]
 
     def _prepare(self):
@@ -154,7 +157,7 @@ class ImageNetTrain(ImageNetBase):
     FILES = ["ILSVRC2012_img_train.tar",]
     SIZES = [147897477120,]
 
-    def __init__(self, process_images:bool = True, data_root: str = None, **kwargs):
+    def __init__(self, process_images:bool=True, data_root:str=None, **kwargs):
         self.process_images = process_images
         self.data_root = data_root
         super().__init__(**kwargs)
@@ -378,8 +381,8 @@ class ImageNetSR(Dataset):
         else:
             LR_image = self.degradation_process(image=image)["image"]
 
-        example["image"] = (image/127.5 - 1.0).astype(np.float32)
-        example["LR_image"] = (LR_image/127.5 - 1.0).astype(np.float32)
+        example["image"] = (image/127.5-1.0).astype(np.float32)
+        example["LR_image"] = (LR_image/127.5-1.0).astype(np.float32)
 
         return example
 
@@ -417,7 +420,8 @@ class ImageNetPatchInpaint(Dataset, ABC):
         max_patch_f: float,
         min_crop_f:float,
         max_crop_f:float,
-        center_crop:bool
+        random_crop:bool,
+        clip_model_name:str,
     ):
         super().__init__()
         self.img_rescler = al.SmallestMaxSize(max_size=size, interpolation=cv2.INTER_AREA)
@@ -425,9 +429,11 @@ class ImageNetPatchInpaint(Dataset, ABC):
         self.max_crop_f = max_crop_f
         self.min_patch_f = min_patch_f
         self.max_patch_f = max_patch_f
-        self.center_crop = center_crop
+        self.random_crop = random_crop
         self.size = size
         self.base = self.get_base()
+        _, preprocss = clip.load(clip_model_name)
+        self.preprocess = preprocss
 
     @abstractmethod
     def get_base(self) -> ImageNetBase:
@@ -442,13 +448,14 @@ class ImageNetPatchInpaint(Dataset, ABC):
         if img.mode != 'RGB':
             img = img.convert('RGB')
         img = np.array(img).astype(np.uint8)
+        img = (img/127.5-1.0).astype(np.float32)
 
         min_crop_f, max_crop_f = self.min_crop_f, self.max_crop_f
-        min_side_len = min(img.shape[-2:])
+        min_side_len = min(img.shape[:2])
         crop_side_len = min_side_len * np.random.uniform(min_crop_f, max_crop_f, size=None)
         crop_side_len = int(crop_side_len)
 
-        crop_cls = al.CenterCrop if self.center_crop else al.RandomCrop
+        crop_cls = al.RandomCrop if self.random_crop else al.CenterCrop
         self.cropper = crop_cls(height=crop_side_len, width=crop_side_len)
 
         img = self.cropper(image=img)['image']
@@ -459,16 +466,24 @@ class ImageNetPatchInpaint(Dataset, ABC):
         patch_height = int(patch_height)
         patch_width = self.size * np.random.uniform(min_patch_f, max_patch_f, size=None)
         patch_width = int(patch_width)
-        x1, x2, y1, y2 = al.get_random_crop_coords(
-            self.size, self.size, patch_height, patch_width, 0, 0
+        x1, y1, x2, y2 = al.get_random_crop_coords(
+            self.size, self.size, patch_height, patch_width, random(), random()
         )
         patch = img[y1:y2, x1:x2]
+        patch_img = Image.fromarray(((patch+1.0)*127.5).astype(np.uint8))
+        patch = self.preprocess(patch_img)
+        patch = rearrange(patch, 'c h w -> h w c')
         mask_img = np.copy(img)
         mask_img[y1:y2, x1:x2] = 0
 
-        item['img_origin'] = img
-        item['img_masked'] = mask_img
-        item['img_patch'] = patch
+        mask = np.zeros((self.size, self.size, 1), dtype=np.float32)
+        mask[y1:y2, x1:x2] = 1
+        mask = mask*2-1.0
+
+        item['image'] = img
+        item['masked_image'] = mask_img
+        item['patch'] = patch
+        item['mask'] = mask
         return item
 
 

@@ -1,9 +1,12 @@
 import clip
 import torch
+import torch as th
 import torch.nn as nn
 
+from einops import rearrange
 from functools import partial
 from torch import Tensor
+from typing import Dict
 
 from ldm.modules.x_transformer import Encoder, TransformerWrapper  # TODO: can we directly rely on lucidrains code and simply add this as a reuirement? --> test
 
@@ -60,19 +63,24 @@ class CLIPPatchEmbedder(AbstractEncoder):
         device='cpu',
     ):
         super().__init__()
-        model, preprocess = clip.load(pretrained_model_name, device)
+        model, _ = clip.load(pretrained_model_name, device)
         self.model = model
-        self.preprocess = preprocess
 
-    def forward(self, batch:Tensor, key:str):
-        x = batch[key]
-        h = self.preprocess(x)
-        h = self.model(h)
+    def forward(self, batch:Dict):
+        patch = batch['patch']
+        patch = rearrange(patch, 'b h w c -> b c h w')
+        h = self.model.encode_image(patch)[:,None,:]
         return h
 
     @torch.no_grad()
-    def encode(self, batch:Tensor, key:str):
-        return self(batch, key)
+    def encode(self, batch:Dict):
+        h = self(batch)
+        concat_h = th.cat([batch['masked_image'], batch['mask']], dim=-1)
+        concat_h = rearrange(concat_h, 'b h w c -> b c h w')
+        return {
+            'c_concat': [concat_h],
+            'c_crossattn': [h]
+        }
 
 
 class BERTTokenizer(AbstractEncoder):

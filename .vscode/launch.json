@@ -5,13 +5,41 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "main.py - train inpaint patch imagenet",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "args": [
+                "--base",
+                "configs/just-diffusion/pin128.yaml",
+                "--gpus",
+                "0,",
+                "-t"
+            ],
+            "env": {
+                "XDG_CACHE_HOME": "/media/xiaguo/disk8t/assets/ILSVRC2017/"
+            },
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
             "name": "main.py - train ldm imagenet",
             "type": "python",
             "request": "launch",
             "program": "main.py",
             "args": [
-                "--base", "configs/latent-diffusion/cin-ldm-vq-f8.yaml",
-                "--gpus", "0,",
+                "--base",
+                "configs/latent-diffusion/cin-ldm-vq-f8.yaml",
+                "--gpus",
+                "0,",
                 "-t"
             ],
             "env": {
@@ -99,7 +127,6 @@
                 "A beautiful epic wondrous fantasy painting of the cloud",
                 "--ddim_eta",
                 "0",
-                "--plms",
                 "--n_samples",
                 "4",
                 "--n_iter",
