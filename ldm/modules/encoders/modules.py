@@ -78,8 +78,8 @@ class CLIPPatchEmbedder(AbstractEncoder):
         concat_h = th.cat([batch['masked_image'], batch['mask']], dim=-1)
         concat_h = rearrange(concat_h, 'b h w c -> b c h w')
         return {
-            'c_concat': [concat_h],
-            'c_crossattn': [h]
+            'c_concat': concat_h,
+            'c_crossattn': h,
         }
 
 

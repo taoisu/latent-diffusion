@@ -1,5 +1,7 @@
 import torch
+
 from torch import nn
+from typing import Iterable
 
 
 class LitEma(nn.Module):
@@ -59,7 +61,7 @@ class LitEma(nn.Module):
             else:
                 assert not key in self.m_name2s_name
 
-    def store(self, parameters):
+    def store(self, parameters:Iterable[nn.Parameter]):
         """
         Save the current parameters for restoring later.
         Args:
@@ -68,7 +70,7 @@ class LitEma(nn.Module):
         """
         self.collected_params = [param.clone() for param in parameters]
 
-    def restore(self, parameters):
+    def restore(self, parameters:Iterable[nn.Parameter]):
         """
         Restore the parameters stored with the `store` method.
         Useful to validate the model with EMA parameters without affecting the
