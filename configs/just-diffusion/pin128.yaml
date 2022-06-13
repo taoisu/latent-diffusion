@@ -10,7 +10,7 @@ model:
     first_stage_key: image
     cond_stage_key: patch
     image_size: 128
-    channels: 7
+    channels: 3
     cond_stage_trainable: false
     conditioning_key: hybrid
     monitor: val/loss_simple_ema

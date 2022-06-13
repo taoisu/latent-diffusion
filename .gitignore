@@ -4,4 +4,4 @@ outputs/
 **/*.ckpt
 .data/
 logs/
-models/
+/models/
