@@ -33,8 +33,9 @@ class DDIMSampler(object):
         name:str,
         attr:Tensor,
     ):
-        if type(attr) == Tensor and attr.device != torch.device("cuda"):
-            attr = attr.to(torch.device("cuda"))
+        model_device = next(self.model.parameters()).device
+        if type(attr) == Tensor and attr.device != model_device:
+            attr = attr.to(model_device)
         setattr(self, name, attr)
 
     def make_schedule(

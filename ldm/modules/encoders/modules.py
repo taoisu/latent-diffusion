@@ -63,8 +63,9 @@ class CLIPPatchEmbedder(AbstractEncoder):
         device='cpu',
     ):
         super().__init__()
-        model, _ = clip.load(pretrained_model_name, device)
+        model, preprocess = clip.load(pretrained_model_name, device)
         self.model = model
+        self.preprocess = preprocess
 
     def forward(self, batch:Dict):
         patch = batch['patch']
