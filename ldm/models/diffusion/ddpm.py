@@ -570,7 +570,7 @@ class LatentDiffusion(DDPM):
             model = instantiate_from_config(config)
             self.cond_stage_model = model
 
-    def _get_denoise_row_from_list(self, samples, desc='', force_no_decoder_quantization=False):
+    def _get_denoise_row_from_list(self, samples:List, desc:str='', force_no_decoder_quantization:bool=False):
         denoise_row = []
         for zd in tqdm(samples, desc=desc):
             denoise_row.append(self.decode_first_stage(zd.to(self.device),
