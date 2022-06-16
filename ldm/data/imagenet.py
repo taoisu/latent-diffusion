@@ -5,6 +5,7 @@ import os
 import pickle
 import shutil
 import tarfile
+import torch
 import yaml
 import PIL
 
@@ -422,6 +423,9 @@ class ImageNetPatchInpaint(Dataset, ABC):
         max_crop_f:float,
         random_crop:bool,
         clip_model_name:str,
+        cond_dropout:float,
+        cond_noise:float,
+        device:str,
     ):
         super().__init__()
         self.img_rescler = al.SmallestMaxSize(max_size=size, interpolation=cv2.INTER_AREA)
@@ -430,10 +434,14 @@ class ImageNetPatchInpaint(Dataset, ABC):
         self.min_patch_f = min_patch_f
         self.max_patch_f = max_patch_f
         self.random_crop = random_crop
+        self.cond_dropout = cond_dropout
+        self.cond_noise = cond_noise
         self.size = size
         self.base = self.get_base()
-        _, preprocss = clip.load(clip_model_name)
+        model, preprocss = clip.load(clip_model_name, device=device)
         self.preprocess = preprocss
+        self.model = model
+        self.model.eval()
 
     @abstractmethod
     def get_base(self) -> ImageNetBase:
@@ -482,8 +490,14 @@ class ImageNetPatchInpaint(Dataset, ABC):
 
         item['image'] = img
         item['masked_image'] = mask_img
-        item['patch'] = patch
         item['mask'] = mask
+        with torch.no_grad():
+            item['patch'] = self.model.encode_image(rearrange(patch, 'h w c -> 1 c h w'))[0]
+        p_dropout, p_noise = random(), random()
+        if p_dropout < self.cond_dropout:
+            item['patch'] = torch.zeros_like(item['patch'])
+        else:
+            item['patch'] = (1-p_noise)*item['patch']+p_noise*torch.rand_like(item['patch'])
         return item
 
 

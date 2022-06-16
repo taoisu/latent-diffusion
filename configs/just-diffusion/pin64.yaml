@@ -9,7 +9,7 @@ model:
     timesteps: 1000
     first_stage_key: image
     cond_stage_key: patch
-    image_size: 128
+    image_size: 64
     channels: 3
     cond_stage_trainable: false
     conditioning_key: hybrid
@@ -27,7 +27,7 @@ model:
       params:
         in_channels: 7
         out_channels: 3
-        model_channels: 256
+        model_channels: 128
         attention_resolutions: [4, 8]
         num_res_blocks: [2, 2, 2, 2]
         channel_mult: [1, 2, 3, 4]
@@ -43,12 +43,12 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 8
+    batch_size: 80
     num_workers: 1
     train:
       target: ldm.data.imagenet.ImageNetPatchInpaintTrain
       params:
-        size: 128
+        size: 64
         min_patch_f: 0.125
         max_patch_f: 0.25
         min_crop_f: 0.5
@@ -61,7 +61,7 @@ data:
     validation:
       target: ldm.data.imagenet.ImageNetPatchInpaintValidation
       params:
-        size: 128
+        size: 64
         min_patch_f: 0.125
         max_patch_f: 0.25
         min_crop_f: 0.5
@@ -77,3 +77,4 @@ lightning:
     max_epochs: -1
     find_unused_parameters: True
     # precision: 16
+    # strategy: deepspeed_stage_3_offload
