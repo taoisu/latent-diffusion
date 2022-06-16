@@ -268,7 +268,6 @@ class ResBlock(TimestepBlock):
             self._forward, (x, emb), self.parameters(), self.use_checkpoint
         )
 
-
     def _forward(self, x:Tensor, emb:Tensor):
         if self.updown:
             in_rest, in_conv = self.in_layers[:-1], self.in_layers[-1]

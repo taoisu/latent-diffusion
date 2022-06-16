@@ -164,10 +164,10 @@ class CheckpointFunction(torch.autograd.Function):
 
 
 def timestep_embedding(
-    timesteps: Tensor,
-    dim: int,
-    max_period: int = 10000,
-    repeat_only: bool = False
+    timesteps:Tensor,
+    dim:int,
+    max_period:int=10000,
+    repeat_only:bool=False,
 ):
     """
     Create sinusoidal timestep embeddings.

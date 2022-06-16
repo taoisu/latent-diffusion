@@ -55,22 +55,16 @@ class TransformerEmbedder(AbstractEncoder):
         return self(x)
 
 
-class CLIPPatchEmbedder(AbstractEncoder):
+class IdentityEmbedder(AbstractEncoder):
 
     def __init__(
         self,
-        pretrained_model_name:str,
         device='cpu',
     ):
         super().__init__()
-        model, preprocess = clip.load(pretrained_model_name, device)
-        self.model = model
-        self.preprocess = preprocess
 
     def forward(self, batch:Dict):
-        patch = batch['patch']
-        patch = rearrange(patch, 'b h w c -> b c h w')
-        h = self.model.encode_image(patch)[:,None,:]
+        h = batch['patch'][:,None,:]
         return h
 
     @torch.no_grad()
