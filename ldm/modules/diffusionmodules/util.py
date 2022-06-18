@@ -16,6 +16,7 @@ import numpy as np
 
 from einops import repeat
 from torch import device, Size, Tensor
+from torch.cuda.amp import autocast
 from typing import Tuple, Callable, Generator, Any
 
 from ldm.util import instantiate_from_config
@@ -150,7 +151,9 @@ class CheckpointFunction(torch.autograd.Function):
             # Tensor storage in place, which is not allowed for detach()'d
             # Tensors.
             shallow_copies = [x.view_as(x) for x in ctx.input_tensors]
-            output_tensors = ctx.run_function(*shallow_copies)
+            need_autocast = any(tsr.dtype in (torch.float16,) for tsr in shallow_copies)
+            with autocast(need_autocast):
+                output_tensors = ctx.run_function(*shallow_copies)
         input_grads = torch.autograd.grad(
             output_tensors,
             ctx.input_tensors + ctx.input_params,
@@ -232,6 +235,7 @@ class SiLU(nn.Module):
 
 
 class GroupNorm32(nn.GroupNorm):
+
     def forward(self, x):
         return super().forward(x.float()).type(x.dtype)
 
