@@ -51,19 +51,17 @@ class EfficientUNetModel(nn.Module):
         conv_resample:bool=True,
         dims:int=2,
         num_classes:int=None,
-        use_checkpoint:bool=False,
+        checkpoint:str=None,
         num_heads:int=-1,
         num_head_channels:int=-1,
         use_scale_shift_norm:bool=False,
         resblock_updown:bool=False,
         transformer_depth:int=1,
         context_dim:Union[int,ListConfig]=None,
+        precision:int=None,
     ) -> None:
         super().__init__()
         assert context_dim is not None
-
-        if type(context_dim) == ListConfig:
-            context_dim = list(context_dim)
 
         assert num_heads != -1 or num_head_channels != -1
         num_heads_upsample = num_heads
@@ -77,7 +75,7 @@ class EfficientUNetModel(nn.Module):
         self.channel_mult = channel_mult
         self.conv_resample = conv_resample
         self.num_classes = num_classes
-        self.use_checkpoint = use_checkpoint
+        self.checkpoint = checkpoint
         self.num_heads = num_heads
         self.num_head_channels = num_head_channels
         self.num_heads_upsample = num_heads_upsample
@@ -86,6 +84,7 @@ class EfficientUNetModel(nn.Module):
         self.context_dim = context_dim
         self.resblock_updown = resblock_updown
         self.use_scale_shift_norm = use_scale_shift_norm
+        self.precision = precision
 
         time_embed_dim = model_channels * 4
         self.time_embed = nn.Sequential(
@@ -121,7 +120,7 @@ class EfficientUNetModel(nn.Module):
                 time_embed_dim,
                 dropout,
                 dims=dims,
-                use_checkpoint=use_checkpoint,
+                checkpoint=checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
             SpatialTransformer(
@@ -130,13 +129,14 @@ class EfficientUNetModel(nn.Module):
                 num_head_channels if num_head_channels != -1 else out_ch // num_heads,
                 depth=transformer_depth,
                 context_dim=context_dim,
+                checkpoint=checkpoint,
             ),
             ResBlock(
                 out_ch,
                 time_embed_dim,
                 dropout,
                 dims=dims,
-                use_checkpoint=use_checkpoint,
+                checkpoint=checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
         )
@@ -178,7 +178,7 @@ class EfficientUNetModel(nn.Module):
         dropout = self.dropout
         context_dim = self.context_dim
         conv_resample = self.conv_resample
-        use_checkpoint = self.use_checkpoint
+        checkpoint = self.checkpoint
         resblock_updown = self.resblock_updown
         transformer_depth = self.transformer_depth
         use_scale_shift_norm = self.use_scale_shift_norm
@@ -194,7 +194,7 @@ class EfficientUNetModel(nn.Module):
                 dropout,
                 out_channels=in_ch,
                 dims=dims,
-                use_checkpoint=use_checkpoint,
+                checkpoint=checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
             )]
             if down_scl in attention_resolutions:
@@ -210,6 +210,7 @@ class EfficientUNetModel(nn.Module):
                     dim_head,
                     depth=transformer_depth,
                     context_dim=context_dim,
+                    checkpoint=checkpoint,
                 ))
             if need_up and i == num_res_blocks:
                 layers.append(ResBlock(
@@ -218,7 +219,7 @@ class EfficientUNetModel(nn.Module):
                     dropout,
                     out_channels=out_ch,
                     dims=dims,
-                    use_checkpoint=use_checkpoint,
+                    checkpoint=checkpoint,
                     use_scale_shift_norm=use_scale_shift_norm,
                     up=True,
                 )
@@ -230,7 +231,6 @@ class EfficientUNetModel(nn.Module):
                 ))
             blocks.append(TimeEmbSeq(*layers))
         return blocks
-
 
     def make_dblock(
         self,
@@ -245,7 +245,7 @@ class EfficientUNetModel(nn.Module):
         dropout = self.dropout
         context_dim = self.context_dim
         conv_resample = self.conv_resample
-        use_checkpoint = self.use_checkpoint
+        checkpoint = self.checkpoint
         resblock_updown = self.resblock_updown
         transformer_depth = self.transformer_depth
         use_scale_shift_norm = self.use_scale_shift_norm
@@ -262,7 +262,7 @@ class EfficientUNetModel(nn.Module):
                     dropout,
                     out_channels=out_ch,
                     dims=dims,
-                    use_checkpoint=use_checkpoint,
+                    checkpoint=checkpoint,
                     use_scale_shift_norm=use_scale_shift_norm,
                     down=True,
                 ) if resblock_updown else Downsample(
@@ -274,15 +274,15 @@ class EfficientUNetModel(nn.Module):
             ))
             channs.append(out_ch)
 
-        layers = []
         for _ in range(num_res_blocks):
+            layers = []
             layers.append(ResBlock(
                 out_ch,
                 time_embed_dim,
                 dropout,
                 out_ch,
                 dims=dims,
-                use_checkpoint=use_checkpoint,
+                checkpoint=checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
             ))
             if down_scl in attention_resolutions:
@@ -298,6 +298,7 @@ class EfficientUNetModel(nn.Module):
                     dim_head,
                     depth=transformer_depth,
                     context_dim=context_dim,
+                    checkpoint=checkpoint,
                 ))
             blocks.append(TimeEmbSeq(*layers))
             channs.append(out_ch)
@@ -321,7 +322,7 @@ class EfficientUNetModel(nn.Module):
         '''
         hs = []
         model_channels = self.model_channels
-        t_emb = timestep_embedding(timesteps, model_channels, repeat_only=False)
+        t_emb = timestep_embedding(timesteps, model_channels, repeat_only=False, dtype=th.float16 if self.precision == 16 else th.float32)
         emb = self.time_embed(t_emb)
 
         h = x

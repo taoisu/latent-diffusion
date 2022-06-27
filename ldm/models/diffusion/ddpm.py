@@ -21,6 +21,8 @@ from tqdm import tqdm
 from torchvision.utils import make_grid
 from typing import Any, Callable, Dict, List, Tuple, Union
 from pytorch_lightning.utilities.distributed import rank_zero_only
+from pytorch_lightning.strategies import DeepSpeedStrategy
+from deepspeed.ops.adam import DeepSpeedCPUAdam
 
 from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
 from ldm.modules.ema import LitEma
@@ -359,7 +361,7 @@ class DDPM(pl.LightningModule):
         if len(x.shape) == 3:
             x = x[..., None]
         x = rearrange(x, 'b h w c -> b c h w')
-        x = x.to(memory_format=torch.contiguous_format).float()
+        x = x.to(memory_format=torch.contiguous_format)
         return x
 
     def shared_step(self, batch:Dict):
@@ -1518,6 +1520,18 @@ class LatentDiffusion(DDPM):
                         mask=mask)
                 x_samples = self.decode_first_stage(samples.to(self.device))
                 log["samples_outpainting"] = x_samples
+                # inpaint patch
+                with self.ema_scope("Plotting Outpaint"):
+                    samples, _ = self.sample_log(
+                        cond=c,
+                        batch_size=N,
+                        ddim=use_ddim,
+                        eta=ddim_eta,
+                        ddim_steps=ddim_steps,
+                        x0=z[:N],
+                    )
+                x_samples = self.decode_first_stage(samples.to(self.device))
+                log["samples_inpaintpatch"] = x_samples
 
         if plot_progressive_rows:
             with self.ema_scope("Plotting Progressives"):
@@ -1544,7 +1558,10 @@ class LatentDiffusion(DDPM):
         if self.learn_logvar:
             print('Diffusion model optimizing logvar')
             params.append(self.logvar)
-        opt = torch.optim.AdamW(params, lr=lr)
+        if self.deepspeed_offload:
+            opt = DeepSpeedCPUAdam(params, lr=lr)
+        else:
+            opt = torch.optim.AdamW(params, lr=lr)
         if self.use_scheduler:
             assert 'target' in self.scheduler_config
             scheduler = instantiate_from_config(self.scheduler_config)
@@ -1557,6 +1574,14 @@ class LatentDiffusion(DDPM):
             }]
             return [opt], scheduler
         return opt
+
+    @property
+    def deepspeed_offload(self) -> bool:
+        strategy = self.trainer.strategy
+        if isinstance(strategy, DeepSpeedStrategy):
+            config = strategy.config['zero_optimization']
+            return config.get('offload_optimizer') or config.get('offload_param')
+        return False
 
     @torch.no_grad()
     def to_rgb(self, x):
