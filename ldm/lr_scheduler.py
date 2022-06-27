@@ -49,7 +49,7 @@ class LambdaWarmUpCosineScheduler2:
         self.last_f = 0.
         self.verbosity_interval = verbosity_interval
 
-    def find_in_interval(self, n):
+    def find_in_interval(self, n:int):
         interval = 0
         for cl in self.cum_cycles[1:]:
             if n <= cl:
@@ -80,12 +80,12 @@ class LambdaWarmUpCosineScheduler2:
 
 class LambdaLinearScheduler(LambdaWarmUpCosineScheduler2):
 
-    def schedule(self, n, **kwargs):
+    def schedule(self, n:int, **kwargs):
         cycle = self.find_in_interval(n)
         n = n - self.cum_cycles[cycle]
         if self.verbosity_interval > 0:
-            if n % self.verbosity_interval == 0: print(f"current step: {n}, recent lr-multiplier: {self.last_f}, "
-                                                       f"current cycle {cycle}")
+            if n % self.verbosity_interval == 0:
+                print(f"current step: {n}, recent lr-multiplier: {self.last_f}, current cycle {cycle}")
 
         if n < self.lr_warm_up_steps[cycle]:
             f = (self.f_max[cycle] - self.f_start[cycle]) / self.lr_warm_up_steps[cycle] * n + self.f_start[cycle]

@@ -1,4 +1,5 @@
 import clip
+import random
 import torch
 import torch as th
 import torch.nn as nn
@@ -59,7 +60,6 @@ class IdentityEmbedder(AbstractEncoder):
 
     def __init__(
         self,
-        device='cpu',
     ):
         super().__init__()
 
@@ -70,6 +70,37 @@ class IdentityEmbedder(AbstractEncoder):
     @torch.no_grad()
     def encode(self, batch:Dict):
         h = self(batch)
+        concat_h = th.cat([batch['masked_image'], batch['mask']], dim=-1)
+        concat_h = rearrange(concat_h, 'b h w c -> b c h w')
+        return {
+            'c_concat': concat_h,
+            'c_crossattn': h,
+        }
+
+class ClipPatchEmbedder(AbstractEncoder):
+
+    def __init__(
+        self,
+        clip_model_name:str,
+        cond_dropout:float,
+    ):
+        super().__init__()
+        model, preprocess = clip.load(clip_model_name)
+        self.model = model
+        self.preprocess = preprocess
+        self.cond_dropout = cond_dropout
+
+    def forward(self, batch:Dict):
+        patch = batch['patch']
+        patch = rearrange(patch, 'b h w c -> b c h w')
+        h = self.model.encode_image(patch)[:,None,:]
+        return h
+
+    @torch.no_grad()
+    def encode(self, batch:Dict):
+        h = self(batch)
+        if random.uniform(0, 1) < self.cond_dropout:
+            h = h.fill_(0)
         concat_h = th.cat([batch['masked_image'], batch['mask']], dim=-1)
         concat_h = rearrange(concat_h, 'b h w c -> b c h w')
         return {

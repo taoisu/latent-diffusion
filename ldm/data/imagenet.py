@@ -17,6 +17,7 @@ import torchvision.transforms.functional as TF
 from abc import ABC, abstractmethod
 from einops import rearrange
 from omegaconf import OmegaConf
+from pathlib import Path
 from functools import partial
 from random import random
 from tqdm import tqdm
@@ -423,9 +424,9 @@ class ImageNetPatchInpaint(Dataset, ABC):
         max_crop_f:float,
         random_crop:bool,
         clip_model_name:str,
-        cond_dropout:float,
-        cond_noise:float,
-        device:str,
+        cond_dropout:float=None,
+        cond_noise:float=None,
+        use_cpu_clip:bool=False,
     ):
         super().__init__()
         self.img_rescler = al.SmallestMaxSize(max_size=size, interpolation=cv2.INTER_AREA)
@@ -434,14 +435,21 @@ class ImageNetPatchInpaint(Dataset, ABC):
         self.min_patch_f = min_patch_f
         self.max_patch_f = max_patch_f
         self.random_crop = random_crop
-        self.cond_dropout = cond_dropout
-        self.cond_noise = cond_noise
         self.size = size
         self.base = self.get_base()
-        model, preprocss = clip.load(clip_model_name, device=device)
-        self.preprocess = preprocss
-        self.model = model
-        self.model.eval()
+        self.use_cpu_clip = use_cpu_clip
+        if use_cpu_clip:
+            model, preprocss = clip.load(clip_model_name, device='cpu')
+            self.preprocess = preprocss
+            self.model = model
+            self.model.eval()
+            self.cond_dropout = cond_dropout
+            self.cond_noise = cond_noise
+        else:
+            n2r = {
+                'ViT-B/32': 224,
+            }
+            self.preprocess = clip.clip._transform(n2r[clip_model_name])
 
     @abstractmethod
     def get_base(self) -> ImageNetBase:
@@ -488,16 +496,19 @@ class ImageNetPatchInpaint(Dataset, ABC):
         mask[y1:y2, x1:x2] = 1
         mask = mask*2-1.0
 
+        item = {}
         item['image'] = img
         item['masked_image'] = mask_img
         item['mask'] = mask
-        with torch.no_grad():
-            item['patch'] = self.model.encode_image(rearrange(patch, 'h w c -> 1 c h w'))[0]
-        p_dropout, p_noise = random(), random()
-        if p_dropout < self.cond_dropout:
-            item['patch'] = torch.zeros_like(item['patch'])
-        else:
-            item['patch'] = (1-p_noise)*item['patch']+p_noise*torch.rand_like(item['patch'])
+        item['patch'] = patch
+        if self.use_cpu_clip:
+            with torch.no_grad():
+                item['patch'] = self.model.encode_image(rearrange(patch, 'h w c -> 1 c h w'))[0]
+            p_dropout, p_noise = random(), random()
+            if p_dropout < self.cond_dropout:
+                item['patch'] = torch.zeros_like(item['patch'])
+            else:
+                item['patch'] = (1-p_noise)*item['patch']+p_noise*torch.rand_like(item['patch'])
         return item
 
 
@@ -523,3 +534,38 @@ class ImageNetPatchInpaintValidation(ImageNetPatchInpaint):
 
     def get_base(self) -> ImageNetBase:
         return ImageNetValidation(process_images=False)
+
+
+class ImageNetPatchInpaintTrainToy(ImageNetPatchInpaint):
+
+    def __init__(
+        self,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+
+    def get_base(self) -> ImageNetBase:
+        total = 1024 * 1024
+        root_dir = Path(__file__).parent.parent.parent
+        sample_path = root_dir / 'data' / 'super_resolution' / '0059.png'
+        return [{
+            'file_path_': sample_path
+        } for _ in range(total)]
+
+
+class ImageNetPatchInpaintValidationToy(ImageNetPatchInpaint):
+
+    def __init__(
+        self,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+
+    def get_base(self) -> ImageNetBase:
+        total = 64 * 1024
+        root_dir = Path(__file__).parent.parent.parent
+        sample_path = root_dir / 'data' / 'super_resolution' / '0059.png'
+        return [{
+            'file_path_': sample_path
+        } for _ in range(total)]
+

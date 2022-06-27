@@ -11,6 +11,7 @@
 import math
 import torch
 
+import torch as th
 import torch.nn as nn
 import numpy as np
 
@@ -171,6 +172,7 @@ def timestep_embedding(
     dim:int,
     max_period:int=10000,
     repeat_only:bool=False,
+    dtype:th.dtype=th.float32,
 ):
     """
     Create sinusoidal timestep embeddings.
@@ -191,6 +193,7 @@ def timestep_embedding(
             embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
     else:
         embedding = repeat(timesteps, 'b -> b d', d=dim)
+    embedding = embedding.to(dtype)
     return embedding
 
 
@@ -237,7 +240,8 @@ class SiLU(nn.Module):
 class GroupNorm32(nn.GroupNorm):
 
     def forward(self, x):
-        return super().forward(x.float()).type(x.dtype)
+        # return super().forward(x.float()).type(x.dtype)
+        return super().forward(x)
 
 def conv_nd(dims, *args, **kwargs):
     """

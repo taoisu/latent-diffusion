@@ -1,3 +1,4 @@
+import deepspeed
 import math
 import numpy as np
 import torch as th
@@ -190,7 +191,7 @@ class ResBlock(TimestepBlock):
         convolution instead of a smaller 1x1 convolution to change the
         channels in the skip connection.
     :param dims: determines if the signal is 1D, 2D, or 3D.
-    :param use_checkpoint: if True, use gradient checkpointing on this module.
+    :param checkpoint: one of [ None, 'native', 'custom', 'deepspeed' ]
     :param up: if True, use this block for upsampling.
     :param down: if True, use this block for downsampling.
     """
@@ -204,7 +205,7 @@ class ResBlock(TimestepBlock):
         use_conv:bool=False,
         use_scale_shift_norm:bool=False,
         dims:int=2,
-        use_checkpoint:bool=False,
+        checkpoint:str=None,
         up:bool=False,
         down:bool=False,
     ):
@@ -214,7 +215,7 @@ class ResBlock(TimestepBlock):
         self.dropout = dropout
         self.out_channels = out_channels or channels
         self.use_conv = use_conv
-        self.use_checkpoint = use_checkpoint
+        self.checkpoint = checkpoint
         self.use_scale_shift_norm = use_scale_shift_norm
 
         self.in_layers = nn.Sequential(
@@ -264,9 +265,14 @@ class ResBlock(TimestepBlock):
         :param emb: an [N x emb_channels] Tensor of timestep embeddings.
         :return: an [N x C x ...] Tensor of outputs.
         """
-        return checkpoint(
-            self._forward, (x, emb), self.parameters(), self.use_checkpoint
-        )
+        if self.checkpoint == 'custom':
+            return checkpoint(self._forward, (x, emb), self.parameters(), True)
+        elif self.checkpoint == 'deepspeed':
+            return deepspeed.checkpointing.checkpoint(self._forward, x, emb)
+        elif self.checkpoint == 'native':
+            raise NotImplementedError()
+        else:
+            return self._forward(x, emb)
 
     def _forward(self, x:Tensor, emb:Tensor):
         if self.updown:
