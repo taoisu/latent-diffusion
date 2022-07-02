@@ -373,7 +373,7 @@ class DDPM(pl.LightningModule):
     def training_step(self, batch:Dict, batch_idx:int):
         loss, loss_dict = self.shared_step(batch)
         self.log_dict(loss_dict, prog_bar=True, logger=True, on_step=True, on_epoch=True)
-        self.log("global_step", self.global_step, prog_bar=True, logger=True, on_step=True, on_epoch=False)
+        self.log("global_step", float(self.global_step), prog_bar=True, logger=True, on_step=True, on_epoch=False)
 
         if self.use_scheduler:
             lr = self.optimizers().param_groups[0]['lr']
@@ -1092,6 +1092,14 @@ class LatentDiffusion(DDPM):
         kl_prior = normal_kl(mean1=qt_mean, logvar1=qt_log_variance, mean2=0.0, logvar2=0.0)
         return mean_flat(kl_prior) / np.log(2.0)
 
+    def get_loss_mask(self, x_start:Tensor, cond:Union[Tensor,Dict]):
+        if self.cond_stage_key == 'patch':
+            mask = cond['c_concat'][:,-1:,:,:]
+            mask = (mask + 1) / 2.
+            return mask
+        else:
+            return torch.ones_like(x_start, dtype=x_start.dtype)
+
     def p_losses(self, x_start:Tensor, cond:Union[Tensor,Dict], t:Tensor, noise:Tensor=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
@@ -1106,6 +1114,10 @@ class LatentDiffusion(DDPM):
             target = noise
         else:
             raise NotImplementedError()
+
+        mask = self.get_loss_mask(x_start, cond)
+        model_output = mask * model_output
+        target = mask * target
 
         loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
         loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})

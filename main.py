@@ -23,12 +23,12 @@ from PIL import Image
 
 from pytorch_lightning import seed_everything
 from pytorch_lightning.trainer import Trainer
+from pytorch_lightning.strategies import DeepSpeedStrategy
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback, LearningRateMonitor
 from pytorch_lightning.utilities.distributed import rank_zero_only
 from pytorch_lightning.utilities import rank_zero_info
 
 from ldm.data.base import Txt2ImgIterableBaseDataset
-from ldm.data.imagenet import ImageNetPatchInpaint
 from ldm.util import instantiate_from_config
 
 
@@ -129,7 +129,7 @@ def get_parser(**parser_kwargs):
         nargs="?",
         const=True,
         default=True,
-        help="scale base-lr by ngpu * batch_size * n_accumulate",
+        help="scale base-lr by ndevices * batch_size * n_accumulate",
     )
     return parser
 
@@ -430,7 +430,10 @@ class ImageLogger(Callback):
                 pl_module.eval()
 
             with torch.no_grad():
-                images = pl_module.log_images(batch, split=split, **self.log_images_kwargs)
+                trainer = pl_module.trainer
+                use_autocast = trainer.precision == 16 and not isinstance(trainer.strategy, DeepSpeedStrategy)
+                with torch.cuda.amp.autocast(use_autocast):
+                    images = pl_module.log_images(batch, split=split, **self.log_images_kwargs)
 
             for k in images:
                 N = min(images[k].shape[0], self.max_images)
@@ -623,13 +626,14 @@ if __name__ == "__main__":
             trainer_config["strategy"] = "ddp"
         for k in nondefault_trainer_args(opt):
             trainer_config[k] = getattr(opt, k)
-        if not "gpus" in trainer_config:
-            del trainer_config["strategy"]
-            cpu = True
-        else:
-            gpuinfo = trainer_config["gpus"]
+        accelerator = trainer_config.get("accelerator", "cpu")
+        if accelerator == "gpu":
+            gpuinfo = trainer_config["devices"]
             print(f"Running on GPUs {gpuinfo}")
             cpu = False
+        else:
+            del trainer_config["strategy"]
+            cpu = True
         trainer_opt = argparse.Namespace(**trainer_config)
         lightning_config.trainer = trainer_config
 
@@ -779,9 +783,9 @@ if __name__ == "__main__":
         # configure learning rate
         bs, base_lr = config.data.params.batch_size, config.model.base_learning_rate
         if not cpu:
-            ngpu = len(lightning_config.trainer.gpus.strip(",").split(','))
+            ndevices = len(lightning_config.trainer.devices.strip(",").split(','))
         else:
-            ngpu = 1
+            ndevices = 1
         if 'accumulate_grad_batches' in lightning_config.trainer:
             accumulate_grad_batches = lightning_config.trainer.accumulate_grad_batches
         else:
@@ -789,12 +793,12 @@ if __name__ == "__main__":
         print(f"accumulate_grad_batches = {accumulate_grad_batches}")
         lightning_config.trainer.accumulate_grad_batches = accumulate_grad_batches
         if opt.scale_lr:
-            model.learning_rate = accumulate_grad_batches * ngpu * bs * base_lr
+            model.learning_rate = accumulate_grad_batches * ndevices * bs * base_lr
             print(
-                "Setting learning rate to {:.2e} = {} (accumulate_grad_batches) * {} (num_gpus) * {} (batchsize) * {:.2e} (base_lr)".format(
+                "Setting learning rate to {:.2e} = {} (accumulate_grad_batches) * {} (num_devices) * {} (batchsize) * {:.2e} (base_lr)".format(
                 model.learning_rate,
                 accumulate_grad_batches,
-                ngpu,
+                ndevices,
                 bs,
                 base_lr,
             ))

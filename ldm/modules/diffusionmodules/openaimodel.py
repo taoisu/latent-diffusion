@@ -21,6 +21,8 @@ from ldm.modules.diffusionmodules.util import (
 from ldm.modules.attention import SpatialTransformer
 from omegaconf.listconfig import ListConfig
 
+from ldm.util import wrap_ckpt
+
 
 # dummy replace
 def convert_module_to_f16(x):
@@ -180,6 +182,7 @@ class Downsample(nn.Module):
         return self.op(x)
 
 
+@wrap_ckpt
 class ResBlock(TimestepBlock):
     """
     A residual block that can optionally change the number of channels.
@@ -191,7 +194,7 @@ class ResBlock(TimestepBlock):
         convolution instead of a smaller 1x1 convolution to change the
         channels in the skip connection.
     :param dims: determines if the signal is 1D, 2D, or 3D.
-    :param checkpoint: one of [ None, 'native', 'custom', 'deepspeed' ]
+    :param checkpoint: one of [ None, 'native', 'custom', 'deepspeed', 'fairscale' ]
     :param up: if True, use this block for upsampling.
     :param down: if True, use this block for downsampling.
     """

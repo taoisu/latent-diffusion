@@ -9,11 +9,11 @@ model:
     timesteps: 1000
     first_stage_key: image
     cond_stage_key: patch
-    image_size: 128
+    image_size: 64
     channels: 3
     cond_stage_trainable: false
     conditioning_key: hybrid
-    use_ema: true
+    use_ema: false
     monitor: val/loss_simple_ema
     scheduler_config: # 10000 warmup steps
       target: ldm.lr_scheduler.LambdaLinearScheduler
@@ -21,14 +21,14 @@ model:
         warm_up_steps: [10000]
         cycle_lengths: [10000000000000]
         f_start: [1.e-6]
-        f_max: [1.]
-        f_min: [ 1.]
+        f_max: [1]
+        f_min: [1]
     unet_config:
       target: ldm.modules.diffusionmodules.imagenmodel.EfficientUNetModel
       params:
         in_channels: 7
         out_channels: 3
-        model_channels: 128
+        model_channels: 192
         attention_resolutions: [4, 8]
         num_res_blocks: [2, 2, 2, 2]
         channel_mult: [1, 2, 3, 4]
@@ -36,48 +36,44 @@ model:
         resblock_updown: true
         context_dim: 512
         transformer_depth: 1
-        checkpoint: fairscale
+        checkpoint: deepspeed
         precision: 16
     first_stage_config:
       target: ldm.models.autoencoder.IdentityFirstStage
     cond_stage_config:
-      target: ldm.modules.encoders.modules.IdentityEmbedder
+      target: ldm.modules.encoders.modules.ClipPatchEmbedder
+      params:
+        clip_model_name: ViT-B/32
+        cond_dropout: 0.4
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 8
+    batch_size: 64
     num_workers: 32
     train:
-      target: ldm.data.imagenet.ImageNetPatchInpaintTrain
+      target: ldm.data.imagenet.ImageNetPatchInpaintTrainToy
       params:
-        size: 128
-        min_patch_f: 0.125
-        max_patch_f: 0.25
+        size: 64
+        min_patch_f: 0.3
+        max_patch_f: 0.7
         min_crop_f: 0.5
         max_crop_f: 1.0
         random_crop: true
         clip_model_name: ViT-B/32
-        device: cpu
-        cond_dropout: 0.6
-        cond_noise: 0.6
     validation:
-      target: ldm.data.imagenet.ImageNetPatchInpaintValidation
+      target: ldm.data.imagenet.ImageNetPatchInpaintValidationToy
       params:
-        size: 128
-        min_patch_f: 0.125
-        max_patch_f: 0.25
+        size: 64
+        min_patch_f: 0.3
+        max_patch_f: 0.7
         min_crop_f: 0.5
         max_crop_f: 1.0
         random_crop: true
         clip_model_name: ViT-B/32
-        device: cpu
-        cond_dropout: 0.6
-        cond_noise: 0.6
 lightning:
   trainer:
     benchmark: True
     max_epochs: -1
     find_unused_parameters: false
     precision: 16
-    # strategy: ddp_find_unused_parameters_false
-    strategy: ddp_fully_sharded
+    strategy: deepspeed_stage_3_offload
