@@ -28,7 +28,7 @@ model:
       params:
         in_channels: 7
         out_channels: 3
-        model_channels: 256
+        model_channels: 128
         attention_resolutions: [4, 8]
         num_res_blocks: [2, 2, 2, 2]
         channel_mult: [1, 2, 3, 4]
@@ -40,7 +40,7 @@ model:
             seq_dim: 1024
             pooled_dim: 768
         transformer_depth: 1
-        checkpoint: deepspeed
+        checkpoint: fairscale
         precision: 16
         skip_rescale: true
     first_stage_config:
@@ -52,7 +52,7 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 128
+    batch_size: 64
     num_workers: 32
     train:
       target: ldm.data.imagenet.ImageNetPatchInpaintTrainToy
@@ -82,8 +82,8 @@ data:
         cond_dropout: 0.2
 lightning:
   trainer:
-    benchmark: True
+    benchmark: true
     max_epochs: -1
     find_unused_parameters: false
     precision: 16
-    strategy: deepspeed_stage_3_offload
+    strategy: ddp_fully_sharded

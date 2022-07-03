@@ -709,7 +709,7 @@ if __name__ == "__main__":
                 "target": "main.ImageLogger",
                 "params": {
                     "batch_frequency": 750,
-                    "increase_log_steps": True,
+                    "increase_log_steps": False,
                     "max_images": 8,
                     "clamp": True,
                     "log_images_kwargs": {
