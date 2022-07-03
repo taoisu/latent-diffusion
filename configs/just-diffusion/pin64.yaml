@@ -12,8 +12,8 @@ model:
     image_size: 64
     channels: 3
     cond_stage_trainable: false
-    conditioning_key: hybrid
-    use_ema: false
+    conditioning_key: tybrid
+    use_ema: true
     monitor: val/loss_simple_ema
     scheduler_config: # 10000 warmup steps
       target: ldm.lr_scheduler.LambdaLinearScheduler
@@ -34,24 +34,28 @@ model:
         channel_mult: [1, 2, 3, 4]
         num_heads: 8
         resblock_updown: true
-        context_dim: 512
+        context_dim: 768
+        contexts:
+          patch:
+            seq_dim: 1024
+            pooled_dim: 768
         transformer_depth: 1
         checkpoint: deepspeed
         precision: 16
+        skip_rescale: true
     first_stage_config:
       target: ldm.models.autoencoder.IdentityFirstStage
     cond_stage_config:
       target: ldm.modules.encoders.modules.ClipPatchEmbedder
       params:
-        clip_model_name: ViT-B/32
-        cond_dropout: 0.4
+        clip_model_name: ViT-L/14
 data:
   target: main.DataModuleFromConfig
   params:
     batch_size: 128
     num_workers: 32
     train:
-      target: ldm.data.imagenet.ImageNetPatchInpaintTrain
+      target: ldm.data.imagenet.ImageNetPatchInpaintTrainToy
       params:
         size: 64
         min_patch_f: 0.3
@@ -59,9 +63,12 @@ data:
         min_crop_f: 0.5
         max_crop_f: 1.0
         random_crop: true
-        clip_model_name: ViT-B/32
+        clip_model_name: ViT-L/14
+        cond_noise: 0.2
+        cond_style: 0.5
+        cond_dropout: 0.2
     validation:
-      target: ldm.data.imagenet.ImageNetPatchInpaintValidation
+      target: ldm.data.imagenet.ImageNetPatchInpaintValidationToy
       params:
         size: 64
         min_patch_f: 0.3
@@ -69,7 +76,10 @@ data:
         min_crop_f: 0.5
         max_crop_f: 1.0
         random_crop: true
-        clip_model_name: ViT-B/32
+        clip_model_name: ViT-L/14
+        cond_noise: 0.2
+        cond_style: 0.5
+        cond_dropout: 0.2
 lightning:
   trainer:
     benchmark: True

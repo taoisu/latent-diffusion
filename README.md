@@ -275,4 +275,48 @@ Thanks for open-sourcing!
 }
 ```
 
+## Contrib
 
+Use this repo for patch conditioning generation
+
+Training
+- [x] Fairscale FSDP w/ Activision Checkpointing
+- [x] Deepspeed Integration w/ Activision Checkpointing
+- [x] Mixed Precision Training
+- [x] Time Embedding w/ Image Patch Embedding
+- [x] CrossAttention On Image Patch Sequence Embedding
+- [x] Log Patch
+- [x] Log Correct Mask For Patch
+- [x] Log Inpainting Sampling w/ Original Patch
+- [x] Log Inpainting Sampling w/ Shuffled Patch
+- [x] Log Classifier Free Guidance Inpaint (2.0, 5.0)
+- [ ] Specify Strategy Params in Yaml
+
+Imagen
+- [x] Efficient UNet
+- [x] Rescale Skip Connection
+- [x] Dynamic Thresholding Sampling
+- [ ] Noise Conditioning Augmentation (SR)
+- [ ] Noise Level Conditioning (SR)
+
+Patch Conditioning
+- [ ] Conditioning Augmentation
+  - [ ] Gaussian Noise
+  - [x] Domain Adaptation
+  - [ ] Color
+  - [ ] Dropout ReImpl
+- [ ] Patch Selection
+  - [x] Random Crop
+  - [ ] Object Ground Truth Label
+
+Task
+- [x] Patch Conditional ImageNet, 64
+  - [x] 110M, bs64, step220k, ViT-B/32, pooled patch
+- [ ] ImageNet Super Resolution, 64 -> 256
+- [ ] ImageNet Super Resolution, 256 -> 1024
+- [ ] Unconditional ImageNet
+- [ ] Class Condidtional ImageNet
+
+Data
+- [x] Prepare ImageNet
+- [ ] Prepare Laion-5b

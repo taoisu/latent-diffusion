@@ -7,6 +7,7 @@ import torch.nn as nn
 from einops import rearrange
 from functools import partial
 from torch import Tensor
+from torchvision.transforms import Normalize
 from typing import Dict
 
 from ldm.modules.x_transformer import Encoder, TransformerWrapper  # TODO: can we directly rely on lucidrains code and simply add this as a reuirement? --> test
@@ -82,30 +83,31 @@ class ClipPatchEmbedder(AbstractEncoder):
     def __init__(
         self,
         clip_model_name:str,
-        cond_dropout:float,
     ):
         super().__init__()
         model, preprocess = clip.load(clip_model_name)
         self.model = model
+        self.model.visual.ret_patch = True
         self.preprocess = preprocess
-        self.cond_dropout = cond_dropout
 
     def forward(self, batch:Dict):
         patch = batch['patch']
-        patch = rearrange(patch, 'b h w c -> b c h w')
-        h = self.model.encode_image(patch)[:,None,:]
-        return h
+        h_pool, h_patch = self.model.encode_image(patch)
+        mask = torch.count_nonzero(patch, dim=list(range(1, patch.ndim))) == 0
+        h_pool.masked_fill_(mask[(...,)+(None,)*(h_pool.ndim-1)], 0.)
+        h_patch.masked_fill_(mask[(...,)+(None,)*(h_patch.ndim-1)], 0.)
+        return h_pool, h_patch
 
     @torch.no_grad()
     def encode(self, batch:Dict):
-        h = self(batch)
-        if random.uniform(0, 1) < self.cond_dropout:
-            h = h.fill_(0)
+        h_pool, h_patch = self(batch)
         concat_h = th.cat([batch['masked_image'], batch['mask']], dim=-1)
         concat_h = rearrange(concat_h, 'b h w c -> b c h w')
         return {
             'c_concat': concat_h,
-            'c_crossattn': h,
+            'c_crossattn': h_patch,
+            'c_emb': h_pool,
+            'c_name': 'patch',
         }
 
 

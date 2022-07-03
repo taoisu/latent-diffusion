@@ -33,10 +33,12 @@
             "program": "main.py",
             "args": [
                 "--base",
-                "configs/just-diffusion/pin128.yaml",
-                "--gpus",
-                "0,1,2,3,4,5,6,7",
-                "-t"
+                "configs/just-diffusion/pin64_fairscale.yaml",
+                "--accelerator",
+                "gpu",
+                "--devices",
+                "0,",
+                "-t",
             ],
             "env": {
                 "XDG_CACHE_HOME": "/home/xiaguo/Downloads/azcopy_linux_amd64_10.15.0/imagenet"

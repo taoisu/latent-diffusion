@@ -208,6 +208,7 @@ class ResBlock(TimestepBlock):
         checkpoint:str=None,
         up:bool=False,
         down:bool=False,
+        skip_rescale:bool=False,
     ):
         super().__init__()
         self.channels = channels
@@ -217,6 +218,7 @@ class ResBlock(TimestepBlock):
         self.use_conv = use_conv
         self.checkpoint = checkpoint
         self.use_scale_shift_norm = use_scale_shift_norm
+        self.skip_rescale = skip_rescale
 
         self.in_layers = nn.Sequential(
             normalization(channels),
@@ -294,7 +296,10 @@ class ResBlock(TimestepBlock):
         else:
             h = h + emb_out
             h = self.out_layers(h)
-        return self.skip_connection(x) + h
+        if self.skip_rescale:
+            return (self.skip_connection(x) + h) / math.sqrt(2)
+        else:
+            return self.skip_connection(x) + h
 
 
 class AttentionBlock(nn.Module):
@@ -311,6 +316,7 @@ class AttentionBlock(nn.Module):
         num_head_channels:int=-1,
         use_checkpoint:bool=False,
         use_new_attention_order:bool=False,
+        skip_rescale:bool=False,
     ):
         super().__init__()
         self.channels = channels
@@ -332,6 +338,7 @@ class AttentionBlock(nn.Module):
             self.attention = QKVAttentionLegacy(self.num_heads)
 
         self.proj_out = zero_module(conv_nd(1, channels, channels, 1))
+        self.skip_rescale = skip_rescale
 
     def forward(self, x:Tensor):
         return checkpoint(self._forward, (x,), self.parameters(), True)   # TODO: check checkpoint usage, is True # TODO: fix the .half call!!!
@@ -342,7 +349,10 @@ class AttentionBlock(nn.Module):
         qkv = self.qkv(self.norm(x))
         h = self.attention(qkv)
         h = self.proj_out(h)
-        return (x + h).reshape(b, c, *spatial)
+        if self.skip_rescale:
+            return ((x + h) / math.sqrt(2)).reshape(b, c, *spatial)
+        else:
+            return (x + h).reshape(b, c, *spatial)
 
 
 def count_flops_attn(model, _x, y):
@@ -485,6 +495,7 @@ class UNetModel(nn.Module):
         context_dim:Union[int,ListConfig]=None,     # custom transformer support
         n_embed:int=None,                           # custom support for prediction of discrete ids into codebook of first stage vq model
         legacy:bool=True,
+        skip_rescale:bool=False,
     ):
         super().__init__()
         if use_spatial_transformer:
@@ -520,6 +531,7 @@ class UNetModel(nn.Module):
         self.num_head_channels = num_head_channels
         self.num_heads_upsample = num_heads_upsample
         self.predict_codebook_ids = n_embed is not None
+        self.skip_rescale = skip_rescale
 
         time_embed_dim = model_channels * 4
         self.time_embed = nn.Sequential(
@@ -553,6 +565,7 @@ class UNetModel(nn.Module):
                         dims=dims,
                         use_checkpoint=use_checkpoint,
                         use_scale_shift_norm=use_scale_shift_norm,
+                        skip_rescale=skip_rescale,
                     )
                 ]
                 ch = mult * model_channels
@@ -571,6 +584,7 @@ class UNetModel(nn.Module):
                             num_heads=num_heads,
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
+                            skip_rescale=skip_rescale,
                         ) if not use_spatial_transformer else SpatialTransformer(
                             ch,
                             num_heads,
@@ -596,6 +610,7 @@ class UNetModel(nn.Module):
                             use_checkpoint=use_checkpoint,
                             use_scale_shift_norm=use_scale_shift_norm,
                             down=True,
+                            skip_rescale=skip_rescale,
                         )
                         if resblock_updown else Downsample(
                             ch,
