@@ -101,6 +101,7 @@ class DDIMSampler(object):
         log_every_t:int=100,
         unconditional_guidance_scale:float=1.,
         unconditional_conditioning:Tensor=None,
+        dynamic_thresholding:float=None,
         # this has to come in the same format as the conditioning, # e.g. as encoded tokens, ...
         **kwargs
     ):
@@ -135,7 +136,8 @@ class DDIMSampler(object):
             x_T=x_T,
             log_every_t=log_every_t,
             unconditional_guidance_scale=unconditional_guidance_scale,
-            unconditional_conditioning=unconditional_conditioning)
+            unconditional_conditioning=unconditional_conditioning,
+            dynamic_thresholding=dynamic_thresholding)
 
         return samples, intermediates
 
@@ -159,6 +161,7 @@ class DDIMSampler(object):
         corrector_kwargs:Dict=None,
         unconditional_guidance_scale:float=1.,
         unconditional_conditioning:Tensor=None,
+        dynamic_thresholding:float=None,
     ):
         device = self.model.betas.device
         b = shape[0]
@@ -202,9 +205,19 @@ class DDIMSampler(object):
                 noise_dropout=noise_dropout, score_corrector=score_corrector,
                 corrector_kwargs=corrector_kwargs,
                 unconditional_guidance_scale=unconditional_guidance_scale,
-                unconditional_conditioning=unconditional_conditioning)
+                unconditional_conditioning=unconditional_conditioning,)
 
             img, pred_x0 = outs
+
+            if dynamic_thresholding is not None:
+                img_cpu = img.cpu().numpy()
+                s = np.percentile(
+                    np.abs(img_cpu), dynamic_thresholding,
+                    axis=tuple(range(1, img_cpu.ndim)))
+                s = np.max(s[...,None], axis=-1, initial=1.0)
+                for i in range(b):
+                    img_cpu[i] = np.clip(img_cpu[i], -s[i], s[i]) / s[i]
+                img = torch.from_numpy(img_cpu).to(img.device)
 
             if callback:
                 callback(i)
@@ -233,7 +246,7 @@ class DDIMSampler(object):
         score_corrector:Any=None,
         corrector_kwargs:Dict=None,
         unconditional_guidance_scale:float=1.,
-        unconditional_conditioning:Tensor=None,
+        unconditional_conditioning:Union[Tensor,Dict]=None,
     ):
         b, *_, device = *x.shape, x.device
 
@@ -242,7 +255,18 @@ class DDIMSampler(object):
         else:
             x_in = torch.cat([x] * 2)
             t_in = torch.cat([t] * 2)
-            c_in = torch.cat([unconditional_conditioning, c])
+            if isinstance(c, Dict):
+                assert unconditional_conditioning.keys() == c.keys()
+                uc = unconditional_conditioning
+                keys = list(c.keys())
+                c_in = {}
+                for key in keys:
+                    if isinstance(c[key], str):
+                        c_in[key] = c[key]
+                    else:
+                        c_in[key] = torch.cat([uc[key], c[key]])
+            else:
+                c_in = torch.cat([unconditional_conditioning, c])
             e_t_uncond, e_t = self.model.apply_model(x_in, t_in, c_in).chunk(2)
             e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
 

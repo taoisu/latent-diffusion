@@ -2,7 +2,7 @@ import torch as th
 import torch.nn as nn
 
 from omegaconf import ListConfig
-from typing import List, Union, Tuple
+from typing import Dict, List, Union, Tuple
 
 from ldm.modules.attention import SpatialTransformer
 from ldm.modules.diffusionmodules.openaimodel import Downsample, Upsample, ResBlock
@@ -57,8 +57,10 @@ class EfficientUNetModel(nn.Module):
         use_scale_shift_norm:bool=False,
         resblock_updown:bool=False,
         transformer_depth:int=1,
-        context_dim:Union[int,ListConfig]=None,
+        context_dim:int=None,
+        contexts:Dict=None,
         precision:int=None,
+        skip_rescale:bool=False,
     ) -> None:
         super().__init__()
         assert context_dim is not None
@@ -85,6 +87,8 @@ class EfficientUNetModel(nn.Module):
         self.resblock_updown = resblock_updown
         self.use_scale_shift_norm = use_scale_shift_norm
         self.precision = precision
+        self.contexts = contexts
+        self.skip_rescale = skip_rescale
 
         time_embed_dim = model_channels * 4
         self.time_embed = nn.Sequential(
@@ -92,6 +96,17 @@ class EfficientUNetModel(nn.Module):
             nn.SiLU(),
             linear(time_embed_dim, time_embed_dim),
         )
+
+        if contexts is not None:
+            for key, val in self.contexts.items():
+                seq_dim = val['seq_dim']
+                pooled_dim = val['pooled_dim']
+                self.register_module(
+                    f'{key}_crossattn_proj',
+                    linear(seq_dim, context_dim) if seq_dim != context_dim else nn.Identity())
+                self.register_module(
+                    f'{key}_emb_proj',
+                    linear(pooled_dim, time_embed_dim) if pooled_dim != time_embed_dim else nn.Identity())
 
         self.i_block = TimeEmbSeq(conv_nd(dims, in_channels, model_channels, 3, padding=1))
 
@@ -122,6 +137,7 @@ class EfficientUNetModel(nn.Module):
                 dims=dims,
                 checkpoint=checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
+                skip_rescale=skip_rescale,
             ),
             SpatialTransformer(
                 out_ch,
@@ -138,6 +154,7 @@ class EfficientUNetModel(nn.Module):
                 dims=dims,
                 checkpoint=checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
+                skip_rescale=skip_rescale,
             ),
         )
 
@@ -184,6 +201,7 @@ class EfficientUNetModel(nn.Module):
         use_scale_shift_norm = self.use_scale_shift_norm
         attention_resolutions = self.attention_resolutions
         num_head_channels = self.num_head_channels
+        skip_rescale = self.skip_rescale
 
         blocks = nn.ModuleList()
         for i in range(num_res_blocks + 1):
@@ -196,6 +214,7 @@ class EfficientUNetModel(nn.Module):
                 dims=dims,
                 checkpoint=checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
+                skip_rescale=skip_rescale,
             )]
             if down_scl in attention_resolutions:
                 if num_head_channels == -1:
@@ -222,6 +241,7 @@ class EfficientUNetModel(nn.Module):
                     checkpoint=checkpoint,
                     use_scale_shift_norm=use_scale_shift_norm,
                     up=True,
+                    skip_rescale=skip_rescale,
                 )
                 if resblock_updown else Upsample(
                     in_ch,
@@ -251,6 +271,7 @@ class EfficientUNetModel(nn.Module):
         use_scale_shift_norm = self.use_scale_shift_norm
         attention_resolutions = self.attention_resolutions
         num_head_channels = self.num_head_channels
+        skip_rescale = self.skip_rescale
 
         blocks = nn.ModuleList()
         channs = []
@@ -265,6 +286,7 @@ class EfficientUNetModel(nn.Module):
                     checkpoint=checkpoint,
                     use_scale_shift_norm=use_scale_shift_norm,
                     down=True,
+                    skip_rescale=skip_rescale,
                 ) if resblock_updown else Downsample(
                     in_ch,
                     conv_resample,
@@ -284,6 +306,7 @@ class EfficientUNetModel(nn.Module):
                 dims=dims,
                 checkpoint=checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
+                skip_rescale=skip_rescale,
             ))
             if down_scl in attention_resolutions:
                 if num_head_channels == -1:
@@ -309,7 +332,7 @@ class EfficientUNetModel(nn.Module):
         self,
         x:th.Tensor,
         timesteps:th.Tensor=None,
-        context:th.Tensor=None,
+        context:Union[th.Tensor,Dict]=None,
         **kwargs
     ):
         '''
@@ -322,8 +345,21 @@ class EfficientUNetModel(nn.Module):
         '''
         hs = []
         model_channels = self.model_channels
-        t_emb = timestep_embedding(timesteps, model_channels, repeat_only=False, dtype=th.float16 if self.precision == 16 else th.float32)
+        dtype = th.float16 if hasattr(self, 'precision') and self.precision == 16 else th.float32
+        t_emb = timestep_embedding(timesteps, model_channels, repeat_only=False, dtype=dtype)
         emb = self.time_embed(t_emb)
+
+        if isinstance(context, Dict):
+            crossattn_context = []
+            for key, val in context.items():
+                if 'emb' in val:
+                    proj_module = getattr(self, f'{key}_emb_proj')
+                    emb += proj_module(val['emb'])
+                if 'crossattn' in val:
+                    proj_module = getattr(self, f'{key}_crossattn_proj')
+                    crossattn_context.append(proj_module(val['crossattn']))
+            crossattn_context = th.cat(crossattn_context, dim=1)
+            context = crossattn_context
 
         h = x
         h = self.i_block(h, emb, context)

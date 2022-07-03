@@ -37,6 +37,7 @@ from ldm.modules.image_degradation import (
 )
 from typing import Dict, List
 
+
 def synset2idx(path_to_yaml: str = "data/index_synset.yaml"):
     with open(path_to_yaml) as f:
         di2s = yaml.load(f)
@@ -426,7 +427,7 @@ class ImageNetPatchInpaint(Dataset, ABC):
         clip_model_name:str,
         cond_dropout:float=None,
         cond_noise:float=None,
-        use_cpu_clip:bool=False,
+        cond_style:float=None,
     ):
         super().__init__()
         self.img_rescler = al.SmallestMaxSize(max_size=size, interpolation=cv2.INTER_AREA)
@@ -437,19 +438,15 @@ class ImageNetPatchInpaint(Dataset, ABC):
         self.random_crop = random_crop
         self.size = size
         self.base = self.get_base()
-        self.use_cpu_clip = use_cpu_clip
-        if use_cpu_clip:
-            model, preprocss = clip.load(clip_model_name, device='cpu')
-            self.preprocess = preprocss
-            self.model = model
-            self.model.eval()
-            self.cond_dropout = cond_dropout
-            self.cond_noise = cond_noise
-        else:
-            n2r = {
-                'ViT-B/32': 224,
-            }
-            self.preprocess = clip.clip._transform(n2r[clip_model_name])
+        self.cond_dropout = cond_dropout
+        self.cond_noise = cond_noise
+        self.cond_style = cond_style
+        n2r = {
+            'ViT-B/32': 224,
+            'ViT-L/14': 224,
+        }
+        res = n2r[clip_model_name]
+        self.preprocess = clip.clip._transform(res)
 
     @abstractmethod
     def get_base(self) -> ImageNetBase:
@@ -464,7 +461,6 @@ class ImageNetPatchInpaint(Dataset, ABC):
         if img.mode != 'RGB':
             img = img.convert('RGB')
         img = np.array(img).astype(np.uint8)
-        img = (img/127.5-1.0).astype(np.float32)
 
         min_crop_f, max_crop_f = self.min_crop_f, self.max_crop_f
         min_side_len = min(img.shape[:2])
@@ -486,9 +482,17 @@ class ImageNetPatchInpaint(Dataset, ABC):
             self.size, self.size, patch_height, patch_width, random(), random()
         )
         patch = img[y1:y2, x1:x2]
-        patch_img = Image.fromarray(((patch+1.0)*127.5).astype(np.uint8))
+        if random() < self.cond_style:
+            j = int(random() * len(self))
+            item_tgt = self.base[j]
+            img_tgt = Image.open(item_tgt['file_path_']).convert('RGB')
+            img_tgt = np.array(img_tgt).astype(np.uint8)
+            style = al.FDA([img_tgt], p=1, read_fn=lambda x: x)
+            patch = style(image=patch)['image']
+        patch_img = Image.fromarray(patch.astype(np.uint8))
         patch = self.preprocess(patch_img)
-        patch = rearrange(patch, 'c h w -> h w c')
+        if random() < self.cond_dropout:
+            patch.fill_(0.)
         mask_img = np.copy(img)
         mask_img[y1:y2, x1:x2] = 0
 
@@ -496,19 +500,13 @@ class ImageNetPatchInpaint(Dataset, ABC):
         mask[y1:y2, x1:x2] = 1
         mask = mask*2-1.0
 
+        img = (img/127.5-1.0).astype(np.float32)
+
         item = {}
         item['image'] = img
         item['masked_image'] = mask_img
         item['mask'] = mask
         item['patch'] = patch
-        if self.use_cpu_clip:
-            with torch.no_grad():
-                item['patch'] = self.model.encode_image(rearrange(patch, 'h w c -> 1 c h w'))[0]
-            p_dropout, p_noise = random(), random()
-            if p_dropout < self.cond_dropout:
-                item['patch'] = torch.zeros_like(item['patch'])
-            else:
-                item['patch'] = (1-p_noise)*item['patch']+p_noise*torch.rand_like(item['patch'])
         return item
 
 

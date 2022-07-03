@@ -5,6 +5,7 @@ import os
 import sys
 import traceback
 import time
+import PIL
 import torch
 import torch as th
 import torchvision
@@ -16,7 +17,7 @@ from functools import partial
 from omegaconf import OmegaConf
 from packaging import version
 from pytorch_lightning import LightningModule as Lit
-from torch.utils.data import random_split, DataLoader, Dataset, Subset
+from torch.utils.data import random_split, DataLoader, Dataset, Subset, default_collate
 from typing import Dict, Any
 from PIL import Image
 
@@ -226,7 +227,8 @@ class DataModuleFromConfig(pl.LightningDataModule):
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             shuffle=False if is_iterable_dataset else True,
-            worker_init_fn=init_fn)
+            worker_init_fn=init_fn,
+            collate_fn=self._collate_fn)
 
     def _val_dataloader(self, shuffle:bool=False):
         if isinstance(self.datasets['validation'], Txt2ImgIterableBaseDataset) or self.use_worker_init_fn:
@@ -238,7 +240,8 @@ class DataModuleFromConfig(pl.LightningDataModule):
             batch_size=self.batch_size,
             num_workers=self.num_workers,
             worker_init_fn=init_fn,
-            shuffle=shuffle)
+            shuffle=shuffle,
+            collate_fn=self._collate_fn)
 
     def _test_dataloader(self, shuffle:bool=False):
         is_iterable_dataset = isinstance(self.datasets['train'], Txt2ImgIterableBaseDataset)
@@ -256,7 +259,7 @@ class DataModuleFromConfig(pl.LightningDataModule):
             num_workers=self.num_workers,
             worker_init_fn=init_fn,
             shuffle=shuffle,
-            collate_fn=None)
+            collate_fn=self._collate_fn)
 
     def _predict_dataloader(self, shuffle:bool=False):
         if isinstance(self.datasets['predict'], Txt2ImgIterableBaseDataset) or self.use_worker_init_fn:
@@ -267,7 +270,23 @@ class DataModuleFromConfig(pl.LightningDataModule):
             self.datasets["predict"],
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            worker_init_fn=init_fn,)
+            worker_init_fn=init_fn,
+            collate_fn=self._collate_fn)
+
+    def _collate_fn(self, batch):
+        ret = {}
+        for item in batch:
+            keys = []
+            for k in item.keys():
+                if isinstance(item[k], PIL.Image.Image):
+                    if k not in ret:
+                        ret[k] = []
+                    ret[k].append(item[k])
+                    keys.append(k)
+            for k in keys:
+                del item[k]
+        ret.update(default_collate(batch))
+        return ret
 
 
 class SetupCallback(Callback):
@@ -690,9 +709,13 @@ if __name__ == "__main__":
                 "target": "main.ImageLogger",
                 "params": {
                     "batch_frequency": 750,
-                    "increase_log_steps": False,
-                    "max_images": 4,
-                    "clamp": True
+                    "increase_log_steps": True,
+                    "max_images": 8,
+                    "clamp": True,
+                    "log_images_kwargs": {
+                        "plot_diffusion_rows": False,
+                        "plot_progressive_rows": False,
+                    }
                 }
             },
             "learning_rate_logger": {

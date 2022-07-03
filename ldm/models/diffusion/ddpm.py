@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from functools import partial
 from tqdm import tqdm
 from torchvision.utils import make_grid
+from torchvision.transforms import Normalize, Compose
 from typing import Any, Callable, Dict, List, Tuple, Union
 from pytorch_lightning.utilities.distributed import rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy
@@ -754,8 +755,8 @@ class LatentDiffusion(DDPM):
                     c = c[:bs]
                 elif isinstance(c, dict):
                     for k in list(c.keys()):
-                        assert isinstance(c[k], Tensor)
-                        c[k] = c[k][:bs]
+                        if isinstance(c[k], Tensor):
+                            c[k] = c[k][:bs]
 
             if self.use_positional_encodings:
                 pos_x, pos_y = self.compute_latent_shifts(batch)
@@ -1435,7 +1436,7 @@ class LatentDiffusion(DDPM):
                 xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["human_label"])
                 log['conditioning'] = xc
             elif self.cond_stage_key == 'patch':
-                pass
+                log['patch'] = self.patch_to_rgb(batch['patch'])
             elif isimage(xc):
                 log["conditioning"] = xc
             if ismap(xc):
@@ -1490,48 +1491,119 @@ class LatentDiffusion(DDPM):
                 log["samples_x0_quantized"] = x_samples
 
             if inpaint:
-                # make a simple center square
-                b, h, w = z.shape[0], z.shape[2], z.shape[3]
-                mask = torch.ones(N, h, w).to(self.device)
-                # zeros will be filled in
-                mask[:,h//4:3*h//4,w//4:3*w//4] = 0.
-                mask = mask[:, None, ...]
-                with self.ema_scope("Plotting Inpaint"):
-                    samples, _ = self.sample_log(
-                        cond=c,
-                        batch_size=N,
-                        ddim=use_ddim,
-                        eta=ddim_eta,
-                        ddim_steps=ddim_steps,
-                        x0=z[:N],
-                        mask=mask)
-                x_samples = self.decode_first_stage(samples.to(self.device))
-                log["samples_inpainting"] = x_samples
-                log["mask"] = mask
-                # outpaint
-                with self.ema_scope("Plotting Outpaint"):
-                    samples, _ = self.sample_log(
-                        cond=c,
-                        batch_size=N,
-                        ddim=use_ddim,
-                        eta=ddim_eta,
-                        ddim_steps=ddim_steps,
-                        x0=z[:N],
-                        mask=mask)
-                x_samples = self.decode_first_stage(samples.to(self.device))
-                log["samples_outpainting"] = x_samples
-                # inpaint patch
-                with self.ema_scope("Plotting Outpaint"):
-                    samples, _ = self.sample_log(
-                        cond=c,
-                        batch_size=N,
-                        ddim=use_ddim,
-                        eta=ddim_eta,
-                        ddim_steps=ddim_steps,
-                        x0=z[:N],
-                    )
-                x_samples = self.decode_first_stage(samples.to(self.device))
-                log["samples_inpaintpatch"] = x_samples
+                if self.cond_stage_key == 'patch':
+                    mask = -batch['mask'][:N]
+                    mask = rearrange(mask, 'b h w c -> b c h w')
+                    log["mask"] = mask.clone()
+                    mask = (mask+1)/2
+
+                    # inpaint w/ original patch
+                    with self.ema_scope("Poltting Inpaint"):
+                        samples, _ = self.sample_log(
+                            cond=c,
+                            batch_size=N,
+                            ddim=use_ddim,
+                            eta=ddim_eta,
+                            ddim_steps=ddim_steps,
+                            x0=z[:N],
+                            mask=mask)
+                    x_samples = self.decode_first_stage(samples.to(self.device))
+                    log["samples_inpainting"] = x_samples
+
+                    # inpaint w/ shuffled patch
+                    import copy
+                    c_shuffle = copy.deepcopy(c)
+                    idx = torch.randperm(N)
+                    c_shuffle['c_crossattn'] = c_shuffle['c_crossattn'][idx]
+                    c_shuffle['c_emb'] = c_shuffle['c_emb'][idx]
+                    log['patch_shuffled'] = log['patch'][idx]
+                    with self.ema_scope("Poltting Inpaint w/ Shuffled Patch"):
+                        samples, _ = self.sample_log(
+                            cond=c_shuffle,
+                            batch_size=N,
+                            ddim=use_ddim,
+                            eta=ddim_eta,
+                            ddim_steps=ddim_steps,
+                            x0=z[:N],
+                            mask=mask)
+                    x_samples = self.decode_first_stage(samples.to(self.device))
+                    log["samples_inpainting_patch_shuffled"] = x_samples
+
+                    # inpaint w/ dynamic thresholding
+                    unconditional_conditioning = copy.deepcopy(c)
+                    unconditional_conditioning['c_crossattn'].fill_(0)
+                    unconditional_conditioning['c_emb'].fill_(0)
+
+                    with self.ema_scope("Poltting Inpaint w/ classifier free guidence 2.0"):
+                        samples, _ = self.sample_log(
+                            cond=c,
+                            batch_size=N,
+                            ddim=use_ddim,
+                            eta=ddim_eta,
+                            ddim_steps=ddim_steps,
+                            x0=z[:N],
+                            mask=mask,
+                            unconditional_guidance_scale=2.0,
+                            unconditional_conditioning=unconditional_conditioning,
+                            dynamic_thresholding=99.5,)
+                    x_samples = self.decode_first_stage(samples.to(self.device))
+
+                    with self.ema_scope("Poltting Inpaint w/ classifier free guidence 5.0"):
+                        samples, _ = self.sample_log(
+                            cond=c,
+                            batch_size=N,
+                            ddim=use_ddim,
+                            eta=ddim_eta,
+                            ddim_steps=ddim_steps,
+                            x0=z[:N],
+                            mask=mask,
+                            unconditional_guidance_scale=5.0,
+                            unconditional_conditioning=unconditional_conditioning,
+                            dynamic_thresholding=99.5,)
+                    x_samples = self.decode_first_stage(samples.to(self.device))
+                else:
+                    # make a simple center square
+                    b, h, w = z.shape[0], z.shape[2], z.shape[3]
+                    mask = torch.ones(N, h, w).to(self.device)
+                    # zeros will be filled in
+                    mask[:,h//4:3*h//4,w//4:3*w//4] = 0.
+                    mask = mask[:, None, ...]
+                    with self.ema_scope("Plotting Inpaint"):
+                        samples, _ = self.sample_log(
+                            cond=c,
+                            batch_size=N,
+                            ddim=use_ddim,
+                            eta=ddim_eta,
+                            ddim_steps=ddim_steps,
+                            x0=z[:N],
+                            mask=mask)
+                    x_samples = self.decode_first_stage(samples.to(self.device))
+                    log["samples_inpainting"] = x_samples
+                    log["mask"] = mask
+                    # outpaint
+                    with self.ema_scope("Plotting Outpaint"):
+                        samples, _ = self.sample_log(
+                            cond=c,
+                            batch_size=N,
+                            ddim=use_ddim,
+                            eta=ddim_eta,
+                            ddim_steps=ddim_steps,
+                            x0=z[:N],
+                            mask=mask)
+                    x_samples = self.decode_first_stage(samples.to(self.device))
+                    log["samples_outpainting"] = x_samples
+                # # inpaint patch
+                # with self.ema_scope("Plotting Outpaint"):
+                #     samples, _ = self.sample_log(
+                #         cond=c,
+                #         batch_size=N,
+                #         ddim=use_ddim,
+                #         eta=ddim_eta,
+                #         ddim_steps=ddim_steps,
+                #         x0=z[:N],
+                #     )
+                # x_samples = self.decode_first_stage(samples.to(self.device))
+                # log["samples_inpaintpatch"] = x_samples
 
         if plot_progressive_rows:
             with self.ema_scope("Plotting Progressives"):
@@ -1592,6 +1664,16 @@ class LatentDiffusion(DDPM):
         x = 2. * (x - x.min()) / (x.max() - x.min()) - 1.
         return x
 
+    @torch.no_grad()
+    def patch_to_rgb(self, patch:Tensor):
+        transform = Compose([
+            Normalize(mean=(0, 0, 0), std=(1/0.26862954, 1/0.26130258, 1/0.27577711)),
+            Normalize(mean=(-0.48145466, -0.4578275, -0.40821073), std=(1, 1, 1))
+        ])
+        img = transform(img=patch)
+        img = img * 2 - 1
+        return img
+
 
 class DiffusionWrapper(pl.LightningModule):
 
@@ -1603,7 +1685,7 @@ class DiffusionWrapper(pl.LightningModule):
         super().__init__()
         self.diffusion_model = instantiate_from_config(diff_model_config)
         self.conditioning_key = conditioning_key
-        assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'adm']
+        assert self.conditioning_key in [None, 'concat', 'crossattn', 'hybrid', 'tybrid', 'adm']
 
     def forward(
         self,
@@ -1611,6 +1693,8 @@ class DiffusionWrapper(pl.LightningModule):
         t:Tensor,
         c_concat:List[Tensor]=None,
         c_crossattn:List[Tensor]=None,
+        c_emb: List[Tensor]=None,
+        c_name: List[str]=None,
     ):
         if self.conditioning_key is None:
             out = self.diffusion_model(x, t)
@@ -1624,6 +1708,15 @@ class DiffusionWrapper(pl.LightningModule):
             xc = torch.cat([x] + c_concat, dim=1)
             cc = torch.cat(c_crossattn, 1)
             out = self.diffusion_model(xc, t, context=cc)
+        elif self.conditioning_key == 'tybrid':
+            xc = torch.cat([x] + c_concat, dim=1)
+            context = {
+                c_name: {
+                    'emb': c_eb,
+                    'crossattn': c_ca,
+                } for c_name, c_ca, c_eb in zip(c_name, c_crossattn, c_emb)
+            }
+            out = self.diffusion_model(xc, t, context=context)
         elif self.conditioning_key == 'adm':
             cc = c_crossattn[0]
             out = self.diffusion_model(x, t, y=cc)
