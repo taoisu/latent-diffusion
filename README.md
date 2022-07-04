@@ -298,8 +298,16 @@ Imagen
 - [x] Dynamic Thresholding Sampling
 - [ ] Noise Conditioning Augmentation (SR)
 - [ ] Noise Level Conditioning (SR)
-  - [ ] Domain Adaptation
+
+Patch Conditioning
+- [ ] Conditioning Augmentation
+  - [ ] Gaussian Noise
+  - [x] Domain Adaptation
+  - [ ] Color
+  - [x] Dropout ReImpl
+- [ ] Patch Selection
   - [x] Random Crop
+  - [ ] Select Object
 
 Tasks
 - [x] ImageNet Patch Conditioning, 64
