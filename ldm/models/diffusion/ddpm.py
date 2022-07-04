@@ -1559,6 +1559,7 @@ class LatentDiffusion(DDPM):
                             unconditional_conditioning=unconditional_conditioning,
                             dynamic_thresholding=99.5,)
                     x_samples = self.decode_first_stage(samples.to(self.device))
+                    log["samples_inpainting_patch_cf_guide_2.0"] = x_samples
 
                     with self.ema_scope("Poltting Inpaint w/ classifier free guidence 5.0"):
                         samples, _ = self.sample_log(
@@ -1573,6 +1574,7 @@ class LatentDiffusion(DDPM):
                             unconditional_conditioning=unconditional_conditioning,
                             dynamic_thresholding=99.5,)
                     x_samples = self.decode_first_stage(samples.to(self.device))
+                    log["samples_inpainting_patch_cf_guide_5.0"] = x_samples
                 else:
                     # make a simple center square
                     b, h, w = z.shape[0], z.shape[2], z.shape[3]
@@ -1604,18 +1606,6 @@ class LatentDiffusion(DDPM):
                             mask=mask)
                     x_samples = self.decode_first_stage(samples.to(self.device))
                     log["samples_outpainting"] = x_samples
-                # # inpaint patch
-                # with self.ema_scope("Plotting Outpaint"):
-                #     samples, _ = self.sample_log(
-                #         cond=c,
-                #         batch_size=N,
-                #         ddim=use_ddim,
-                #         eta=ddim_eta,
-                #         ddim_steps=ddim_steps,
-                #         x0=z[:N],
-                #     )
-                # x_samples = self.decode_first_stage(samples.to(self.device))
-                # log["samples_inpaintpatch"] = x_samples
 
         if plot_progressive_rows:
             with self.ema_scope("Plotting Progressives"):
