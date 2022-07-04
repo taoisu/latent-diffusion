@@ -1,3 +1,4 @@
+import fairscale
 import importlib
 import torch
 
@@ -86,3 +87,14 @@ def get_obj_from_str(string, reload=False):
         module_imp = importlib.import_module(module)
         importlib.reload(module_imp)
     return getattr(importlib.import_module(module, package=None), cls)
+
+
+def wrap_ckpt(cls):
+
+    def constructor(*args, **kwargs):
+        module = cls(*args, **kwargs)
+        if kwargs.get('checkpoint', None) == 'fairscale':
+            module = fairscale.nn.checkpoint_wrapper(module, offload_to_cpu=True)
+        return module
+
+    return constructor

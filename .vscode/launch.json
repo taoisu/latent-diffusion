@@ -41,7 +41,9 @@
                 "-t",
             ],
             "env": {
-                "XDG_CACHE_HOME": "/home/xiaguo/Downloads/azcopy_linux_amd64_10.15.0/imagenet"
+                "XDG_CACHE_HOME": "/media/xiaguo/disk8t/assets/ILSVRC2017",
+                // "XDG_CACHE_HOME": "/home/xiaguo/Downloads/azcopy_linux_amd64_10.15.0/imagenet",
+                // "TORCH_DISTRIBUTED_DEBUG": "DETAIL"
             },
             "console": "integratedTerminal",
             "justMyCode": false

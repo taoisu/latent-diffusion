@@ -304,13 +304,13 @@ Patch Conditioning
   - [ ] Gaussian Noise
   - [x] Domain Adaptation
   - [ ] Color
-  - [ ] Dropout ReImpl
+  - [x] Dropout ReImpl
 - [ ] Patch Selection
   - [x] Random Crop
-  - [ ] Object Ground Truth Label
+  - [ ] Select Object
 
-Task
-- [x] Patch Conditional ImageNet, 64
+Tasks
+- [x] ImageNet Patch Conditioning, 64
   - [x] 110M, bs64, step220k, ViT-B/32, pooled patch
 - [ ] ImageNet Super Resolution, 64 -> 256
 - [ ] ImageNet Super Resolution, 256 -> 1024
