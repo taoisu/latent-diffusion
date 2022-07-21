@@ -1414,9 +1414,10 @@ class LatentDiffusion(DDPM):
         sample:bool=True,
         ddim_steps:int=200,
         ddim_eta:float=1.,
-        return_keys: List = None,
+        return_keys:List=None,
         quantize_denoised:bool=True,
         inpaint:bool=True,
+        partial_denoise_steps:List[int]=None,
         plot_denoise_rows:bool=False,
         plot_progressive_rows:bool=True,
         plot_diffusion_rows:bool=True,
@@ -1501,6 +1502,46 @@ class LatentDiffusion(DDPM):
                         quantize_denoised=True)
                 x_samples = self.decode_first_stage(samples.to(self.device))
                 log["samples_x0_quantized"] = x_samples
+
+            if partial_denoise_steps:
+                for step in partial_denoise_steps:
+                    a_t = self.alphas_cumprod[step]
+                    x_T = a_t.sqrt() * z[:N] + (1 - a_t).sqrt() * torch.rand_like(z[:N])
+                    log[f"samples_denoise_step_{step}_src"] = x_T
+                    with self.ema_scope(f"Poltting denoise from step {step}"):
+                        samples, _ = self.sample_log(
+                            cond=c,
+                            batch_size=N,
+                            ddim=use_ddim,
+                            eta=ddim_eta,
+                            ddim_steps=ddim_steps,
+                            x0=z[:N],
+                            x_T=x_T)
+                    x_samples = self.decode_first_stage(samples.to(self.device))
+                    log[f"samples_denoise_step_{step}"] = x_samples
+
+                    # make a simple center square
+                    b, h, w = z.shape[0], z.shape[2], z.shape[3]
+                    mask = torch.ones(N, h, w).to(self.device)
+                    # zeros will be filled in
+                    mask[:,h//4:3*h//4,w//4:3*w//4] = 0.
+                    mask = mask[:, None, ...]
+                    shuffle_z = z[:N][torch.randperm(N)]
+                    mix_z = z[:N]*mask+shuffle_z*(1-mask)
+                    x_T = a_t.sqrt() * mix_z[:N] + (1 - a_t).sqrt() * torch.rand_like(mix_z[:N])
+                    log[f"samples_denoise_step_{step}_mix_src"] = x_T
+                    with self.ema_scope(f"Poltting mix denoise from step {step}"):
+                        samples, _ = self.sample_log(
+                            cond=c,
+                            batch_size=N,
+                            ddim=use_ddim,
+                            eta=ddim_eta,
+                            ddim_steps=ddim_steps,
+                            x0=z[:N],
+                            x_T=x_T)
+                    x_samples = self.decode_first_stage(samples.to(self.device))
+                    log[f"samples_denoise_step_{step}_mix"] = x_samples
+
 
             if inpaint:
                 if self.cond_stage_key == 'patch':
@@ -1603,7 +1644,7 @@ class LatentDiffusion(DDPM):
                             eta=ddim_eta,
                             ddim_steps=ddim_steps,
                             x0=z[:N],
-                            mask=mask)
+                            mask=-mask)
                     x_samples = self.decode_first_stage(samples.to(self.device))
                     log["samples_outpainting"] = x_samples
 

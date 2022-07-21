@@ -712,13 +712,15 @@ if __name__ == "__main__":
             "image_logger": {
                 "target": "main.ImageLogger",
                 "params": {
-                    "batch_frequency": 750,
+                    "batch_frequency": 2500,
                     "increase_log_steps": False,
                     "max_images": 8,
                     "clamp": True,
                     "log_images_kwargs": {
-                        "plot_diffusion_rows": False,
+                        "plot_diffusion_rows": True,
                         "plot_progressive_rows": False,
+                        "partial_denoise_steps": [500, 700, 900],
+                        "inpaint": False
                     }
                 }
             },

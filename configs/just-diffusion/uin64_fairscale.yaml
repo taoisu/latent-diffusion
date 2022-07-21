@@ -1,18 +1,18 @@
 model:
-  base_learning_rate: 1.0e-06
+  base_learning_rate: 1.0e-07
   target: ldm.models.diffusion.ddpm.LatentDiffusion
   params:
     linear_start: 0.0015
     linear_end: 0.0195
+    beta_schedule: cosine
+    # original_elbo_weight: 0.001
     num_timesteps_cond: 1
     log_every_t: 200
     timesteps: 1000
     first_stage_key: image
-    cond_stage_key: patch
     image_size: 64
     channels: 3
     cond_stage_trainable: false
-    conditioning_key: tybrid
     use_ema: true
     monitor: val/loss_simple_ema
     scheduler_config: # 10000 warmup steps
@@ -20,70 +20,46 @@ model:
       params:
         warm_up_steps: [10000]
         cycle_lengths: [10000000000000]
-        f_start: [1.e-6]
+        f_start: [1.e-7]
         f_max: [1]
         f_min: [1]
     unet_config:
       target: ldm.modules.diffusionmodules.imagenmodel.EfficientUNetModel
       params:
-        in_channels: 7
+        in_channels: 3
         out_channels: 3
         model_channels: 256
         attention_resolutions: [4, 8]
-        num_res_blocks: [2, 2, 3, 3]
+        num_res_blocks: [2, 2, 2, 2]
         channel_mult: [1, 2, 3, 4]
         num_heads: 8
         resblock_updown: true
-        context_dim: 768
-        contexts:
-          patch:
-            seq_dim: 1024
-            pooled_dim: 768
         transformer_depth: 1
         checkpoint: fairscale
         precision: 16
         skip_rescale: false
     first_stage_config:
       target: ldm.models.autoencoder.IdentityFirstStage
-    cond_stage_config:
-      target: ldm.modules.encoders.modules.ClipPatchEmbedder
-      params:
-        clip_model_name: ViT-L/14
+    cond_stage_config: __is_unconditional__
 data:
   target: main.DataModuleFromConfig
   params:
     batch_size: 64
-    num_workers: 32
+    num_workers: 36
     train:
-      target: ldm.data.imagenet.ImageNetPatchInpaintTrain
+      target: ldm.data.imagenet.ImageNetTrain
       params:
-        size: 64
-        min_patch_f: 0.3
-        max_patch_f: 0.7
-        min_crop_f: 0.5
-        max_crop_f: 1.0
-        random_crop: true
-        clip_model_name: ViT-L/14
-        cond_noise: 0.2
-        cond_style: 0.5
-        cond_dropout: 0.2
+        config:
+          size: 64
     validation:
-      target: ldm.data.imagenet.ImageNetPatchInpaintValidation
+      target: ldm.data.imagenet.ImageNetValidation
       params:
-        size: 64
-        min_patch_f: 0.3
-        max_patch_f: 0.7
-        min_crop_f: 0.5
-        max_crop_f: 1.0
-        random_crop: true
-        clip_model_name: ViT-L/14
-        cond_noise: 0.2
-        cond_style: 0.5
-        cond_dropout: 0.2
+        config:
+          size: 64
 lightning:
   trainer:
     benchmark: true
     max_epochs: -1
     find_unused_parameters: false
     precision: 16
-    strategy: ddp_fully_sharded
+    strategy: ddp_fully_sharded‘
