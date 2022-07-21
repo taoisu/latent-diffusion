@@ -63,7 +63,6 @@ class EfficientUNetModel(nn.Module):
         skip_rescale:bool=False,
     ) -> None:
         super().__init__()
-        assert context_dim is not None
 
         assert num_heads != -1 or num_head_channels != -1
         num_heads_upsample = num_heads
