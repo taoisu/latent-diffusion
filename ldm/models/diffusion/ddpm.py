@@ -18,15 +18,20 @@ from einops import rearrange, repeat
 from contextlib import contextmanager
 from functools import partial
 from tqdm import tqdm
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, wrap
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    apply_activation_checkpointing_wrapper,
+)
 from torchvision.utils import make_grid
 from torchvision.transforms import Normalize, Compose
 from typing import Any, Callable, Dict, List, Tuple, Union
 from pytorch_lightning.utilities.distributed import rank_zero_only
-from pytorch_lightning.strategies import DeepSpeedStrategy
+from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy
 from deepspeed.ops.adam import DeepSpeedCPUAdam
+from ldm.modules.diffusionmodules.openaimodel import ResBlock, TimestepEmbedSequential
 
 from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
-from ldm.modules.ema import LitEma
+from ldm.modules.ema import LitEma, LitEmaGnrl
 from ldm.modules.distributions.distributions import normal_kl, DiagonalGaussianDistribution
 from ldm.models.autoencoder import VQModelInterface, IdentityFirstStage, AutoencoderKL
 from ldm.modules.diffusionmodules.util import make_beta_schedule, extract_into_tensor, noise_like
@@ -100,8 +105,8 @@ class DDPM(pl.LightningModule):
         count_params(self.model, verbose=True)
         self.use_ema = use_ema
         if self.use_ema:
-            self.model_ema = LitEma(self.model)
-            print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
+            self.model_ema = LitEmaGnrl(self.model)
+            print(f"Keeping EMAs of {len(list(self.model_ema.parameters()))}.")
 
         self.use_scheduler = scheduler_config is not None
         if self.use_scheduler:
@@ -506,6 +511,17 @@ class LatentDiffusion(DDPM):
         self.cond_ids = torch.full(size=(self.num_timesteps,), fill_value=self.num_timesteps - 1, dtype=torch.long)
         ids = torch.round(torch.linspace(0, self.num_timesteps - 1, self.num_timesteps_cond)).long()
         self.cond_ids[:self.num_timesteps_cond] = ids
+
+    def configure_sharded_model(self):
+        '''
+        hook gets called by lightning within the enable_wrap context manager
+        '''
+        if isinstance(self.trainer.strategy, DDPFullyShardedNativeStrategy):
+            unet_wrap_policy = partial(
+                transformer_auto_wrap_policy,
+                transformer_layer_cls=(TimestepEmbedSequential,),)
+            wrap(self.model, auto_wrap_policy=unet_wrap_policy)
+            wrap(self.model_ema, auto_wrap_policy=unet_wrap_policy)
 
     @rank_zero_only
     @torch.no_grad()

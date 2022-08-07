@@ -9,7 +9,6 @@ from inspect import isfunction
 from torch import nn, einsum, Tensor
 
 from ldm.modules.diffusionmodules.util import checkpoint
-from ldm.util import wrap_ckpt
 
 
 def exists(val):
@@ -219,7 +218,6 @@ class CrossAttention(nn.Module):
         return self.to_out(out)
 
 
-@wrap_ckpt
 class BasicTransformerBlock(nn.Module):
     '''
     Use this block for correctly handle deepspeed
@@ -258,8 +256,6 @@ class BasicTransformerBlock(nn.Module):
             return checkpoint(self._forward, (x, context), self.parameters(), True)
         elif self.checkpoint == 'deepspeed':
             return deepspeed.checkpointing.checkpoint(self._forward, x, context)
-        elif self.checkpoint == 'native':
-            raise NotImplementedError()
         else:
             return self._forward(x, context)
 

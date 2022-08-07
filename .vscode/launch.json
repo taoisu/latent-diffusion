@@ -49,6 +49,25 @@
             "justMyCode": false
         },
         {
+            "name": "main.py - train sr avid",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "args": [
+                "--base",
+                "configs/just-diffusion/sravid512x4_fsdp-native.yaml",
+                "--accelerator",
+                "gpu",
+                "--devices",
+                "0,",
+                "-t",
+            ],
+            "env": {
+                "AVID_ROOT_DIR": "/mnt/azureml/cr/j/dc351b51bd13418788a0e2ec2fa76999/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data/avidxchange/",
+            },
+            "justMyCode": false
+        },
+        {
             "name": "main.py - train ldm imagenet",
             "type": "python",
             "request": "launch",

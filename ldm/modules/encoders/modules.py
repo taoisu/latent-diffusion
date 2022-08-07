@@ -46,8 +46,10 @@ class TransformerEmbedder(AbstractEncoder):
     def __init__(self, n_embed, n_layer, vocab_size, max_seq_len=77, device="cuda"):
         super().__init__()
         self.device = device
-        self.transformer = TransformerWrapper(num_tokens=vocab_size, max_seq_len=max_seq_len,
-                                              attn_layers=Encoder(dim=n_embed, depth=n_layer))
+        self.transformer = TransformerWrapper(
+            num_tokens=vocab_size,
+            max_seq_len=max_seq_len,
+            attn_layers=Encoder(dim=n_embed, depth=n_layer))
 
     def forward(self, tokens):
         tokens = tokens.to(self.device)  # meh
@@ -192,13 +194,15 @@ class BERTEmbedder(AbstractEncoder):
 
 class SpatialRescaler(nn.Module):
 
-    def __init__(self,
-                 n_stages=1,
-                 method='bilinear',
-                 multiplier=0.5,
-                 in_channels=3,
-                 out_channels=None,
-                 bias=False):
+    def __init__(
+        self,
+        n_stages=1,
+        method='bilinear',
+        multiplier=0.5,
+        in_channels=3,
+        out_channels=None,
+        bias=False,
+    ):
         super().__init__()
         self.n_stages = n_stages
         assert self.n_stages >= 0
@@ -257,8 +261,8 @@ class FrozenCLIPTextEmbedder(nn.Module):
 
 class FrozenClipImageEmbedder(nn.Module):
     """
-        Uses the CLIP image encoder.
-        """
+    Uses the CLIP image encoder.
+    """
     def __init__(
             self,
             model,

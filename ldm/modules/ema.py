@@ -1,7 +1,64 @@
+import copy
 import torch
 
 from torch import nn
 from typing import Iterable
+
+
+class LitEmaGnrl(nn.Module):
+
+    def __init__(
+        self,
+        model:nn.Module,
+        decay:float=0.9999,
+        use_num_updates:bool=True,
+    ):
+        super().__init__()
+        if decay < 0.0 or decay > 1.0:
+            raise ValueError('Decay must be between 0 and 1')
+
+        self.model = copy.deepcopy(model)
+        self.decay = decay
+        self.num_updates = 0 if use_num_updates else -1
+
+    def forward(
+        self,
+        model:nn.Module,
+    ):
+        decay = self.decay
+        num_updates = self.num_updates
+        if num_updates >= 0:
+            num_updates += 1
+            decay = min(self.decay, (1+num_updates)/(10+num_updates))
+            self.num_updates = num_updates
+        one_minus_decay = 1 - decay
+        with torch.no_grad():
+            m_new_ps = dict(model.named_parameters())
+            m_old_ps = dict(self.model.named_parameters())
+            for k in m_new_ps:
+                m_old_ps[k].sub_(one_minus_decay*(m_new_ps[k]-m_old_ps[k]))
+
+    def copy_to(
+        self,
+        model:nn.Module,
+    ):
+        m_new_ps = dict(model.named_parameters())
+        m_old_ps = dict(self.model.named_parameters())
+        for k in m_new_ps:
+            m_new_ps[k].data.copy_(m_old_ps[k].data)
+
+    def store(
+        self,
+        params:Iterable[nn.Parameter],
+    ):
+        self.cache_params = [param.clone() for param in params]
+
+    def restore(
+        self,
+        params:Iterable[nn.Parameter],
+    ):
+        for c_p, n_p in zip(self.cache_params, params):
+            n_p.data.copy_(c_p.data)
 
 
 class LitEma(nn.Module):
