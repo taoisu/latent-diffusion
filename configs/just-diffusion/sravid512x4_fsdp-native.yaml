@@ -25,8 +25,7 @@ model:
           num_res_blocks: 2
           channel_mult: [1, 2, 2, 4]
           num_head_channels: 32
-          use_spatial_transformer: true
-          context_dim: 512
+          use_spatial_transformer: false
     first_stage_config:
       target: ldm.models.autoencoder.IdentityFirstStage
     cond_stage_config:
@@ -34,7 +33,7 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 32
+    batch_size: 4
     wrap: false
     num_workers: 32
     train:

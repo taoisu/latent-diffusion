@@ -142,8 +142,7 @@ class DDPM(pl.LightningModule):
 
         self.learn_logvar = learn_logvar
         self.logvar = torch.full(fill_value=logvar_init, size=(self.num_timesteps,))
-        if self.learn_logvar:
-            self.logvar = nn.Parameter(self.logvar, requires_grad=True)
+        self.logvar = nn.Parameter(self.logvar, requires_grad=self.learn_logvar)
 
 
     def register_schedule(
@@ -560,8 +559,7 @@ class LatentDiffusion(DDPM):
                 transformer_layer_cls=(TimestepEmbedSequential,),)
             wrap(self.model, auto_wrap_policy=unet_wrap_policy)
             wrap(self.model_ema, auto_wrap_policy=unet_wrap_policy)
-            for k, v in self.named_buffers():
-                setattr(self, k, v.to(self.trainer.strategy.root_device))
+            self.to(self.trainer.strategy.root_device)
         modules = (ResBlock, BasicTransformerBlock, AttentionBlock)
         self.apply_activation_checkpointing(self.model, modules, 'native_2')
         self.apply_activation_checkpointing(self.model_ema, modules, 'native_2')
