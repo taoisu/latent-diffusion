@@ -8,6 +8,9 @@ import torch.nn.functional as F
 from abc import abstractmethod
 from torch import Tensor
 from typing import List, Tuple, Union
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    CheckpointWrapper,
+)
 
 from ldm.modules.diffusionmodules.util import (
     checkpoint,
@@ -81,9 +84,12 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
 
     def forward(self, x:Tensor, emb:Tensor, context:Tensor=None):
         for layer in self:
-            if isinstance(layer, TimestepBlock):
+            true_layer = layer
+            if isinstance(true_layer, CheckpointWrapper):
+                true_layer = layer._checkpoint_wrapped_module
+            if isinstance(true_layer, TimestepBlock):
                 x = layer(x, emb)
-            elif isinstance(layer, SpatialTransformer):
+            elif isinstance(true_layer, SpatialTransformer):
                 x = layer(x, context)
             else:
                 x = layer(x)

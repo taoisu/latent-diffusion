@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pytorch_lightning as pl
+import torch.nn.functional as F
 
 from copy import deepcopy
 from torch import Tensor
@@ -31,7 +32,7 @@ from typing import Any, Callable, Dict, List, Tuple, Union
 from pytorch_lightning.utilities.distributed import rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy
 from deepspeed.ops.adam import DeepSpeedCPUAdam
-from ldm.modules.attention import SpatialTransformer
+from ldm.modules.attention import BasicTransformerBlock
 from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, TimestepEmbedSequential
 
 from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
@@ -561,9 +562,9 @@ class LatentDiffusion(DDPM):
             wrap(self.model_ema, auto_wrap_policy=unet_wrap_policy)
             for k, v in self.named_buffers():
                 setattr(self, k, v.to(self.trainer.strategy.root_device))
-        modules = (ResBlock, SpatialTransformer, AttentionBlock)
-        self.apply_activation_checkpointing(self.model, modules, 'native_0')
-        self.apply_activation_checkpointing(self.model_ema, modules, 'native_0')
+        modules = (ResBlock, BasicTransformerBlock, AttentionBlock)
+        self.apply_activation_checkpointing(self.model, modules, 'native_2')
+        self.apply_activation_checkpointing(self.model_ema, modules, 'native_2')
 
     @rank_zero_only
     @torch.no_grad()
@@ -796,6 +797,9 @@ class LatentDiffusion(DDPM):
                     xc = batch
                 elif cond_key == 'patch':
                     xc = batch
+                elif cond_key == 'lr_image':
+                    xc = super().get_input(batch, cond_key).to(self.device)
+                    xc = F.interpolate(xc, tuple(x.shape[-2:]), mode="bilinear")
                 else:
                     xc = super().get_input(batch, cond_key).to(self.device)
             else:
