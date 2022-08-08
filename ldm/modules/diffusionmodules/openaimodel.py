@@ -312,7 +312,7 @@ class AttentionBlock(nn.Module):
         channels:int,
         num_heads:int=1,
         num_head_channels:int=-1,
-        use_checkpoint:bool=False,
+        checkpoint:str=None,
         use_new_attention_order:bool=False,
         skip_rescale:bool=False,
     ):
@@ -325,7 +325,7 @@ class AttentionBlock(nn.Module):
                 channels % num_head_channels == 0
             ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
             self.num_heads = channels // num_head_channels
-        self.use_checkpoint = use_checkpoint
+        self.checkpoint = checkpoint
         self.norm = normalization(channels)
         self.qkv = conv_nd(1, channels, channels * 3, 1)
         if use_new_attention_order:
@@ -339,7 +339,10 @@ class AttentionBlock(nn.Module):
         self.skip_rescale = skip_rescale
 
     def forward(self, x:Tensor):
-        return checkpoint(self._forward, (x,), self.parameters(), True)   # TODO: check checkpoint usage, is True # TODO: fix the .half call!!!
+        if self.checkpoint == 'custom':
+            return checkpoint(self._forward, (x,), self.parameters(), True)   # TODO: check checkpoint usage, is True # TODO: fix the .half call!!!
+        else:
+            return self._forward(x)
 
     def _forward(self, x:Tensor):
         b, c, *spatial = x.shape

@@ -16,11 +16,14 @@ from torch import Tensor
 from torch.optim.lr_scheduler import LambdaLR
 from einops import rearrange, repeat
 from contextlib import contextmanager
+from fairscale.nn import checkpoint_wrapper as checkpoint_wrapper_fairscale
 from functools import partial
 from tqdm import tqdm
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, wrap
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     apply_activation_checkpointing_wrapper,
+    CheckpointImpl,
+    checkpoint_wrapper as checkpoint_wrapper_native,
 )
 from torchvision.utils import make_grid
 from torchvision.transforms import Normalize, Compose
@@ -28,7 +31,8 @@ from typing import Any, Callable, Dict, List, Tuple, Union
 from pytorch_lightning.utilities.distributed import rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy
 from deepspeed.ops.adam import DeepSpeedCPUAdam
-from ldm.modules.diffusionmodules.openaimodel import ResBlock, TimestepEmbedSequential
+from ldm.modules.attention import SpatialTransformer
+from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, TimestepEmbedSequential
 
 from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
 from ldm.modules.ema import LitEma, LitEmaGnrl
@@ -507,10 +511,43 @@ class LatentDiffusion(DDPM):
             self.init_from_ckpt(ckpt_path, ignore_keys)
             self.restarted_from_ckpt = True
 
-    def make_cond_schedule(self, ):
+    def make_cond_schedule(self):
         self.cond_ids = torch.full(size=(self.num_timesteps,), fill_value=self.num_timesteps - 1, dtype=torch.long)
         ids = torch.round(torch.linspace(0, self.num_timesteps - 1, self.num_timesteps_cond)).long()
         self.cond_ids[:self.num_timesteps_cond] = ids
+
+    def apply_activation_checkpointing(
+        self,
+        model:nn.Module,
+        modules:Tuple[nn.Module],
+        mode:str):
+        '''
+        :param mode: one of 'native_0|native_1|native_2|fairscale_0|fairscale_1'
+        '''
+        if mode.startswith('native_'):
+            if mode == 'native_0':
+                wrapper = partial(checkpoint_wrapper_native, checkpoint_impl=CheckpointImpl.REENTRANT, offload_to_cpu=True)
+            elif mode == 'native_1':
+                wrapper = partial(checkpoint_wrapper_native, checkpoint_impl=CheckpointImpl.REENTRANT, offload_to_cpu=False)
+            else:
+                wrapper = partial(checkpoint_wrapper_native, checkpoint_impl=CheckpointImpl.NO_REENTRANT)
+        elif mode.startswith('fairscale_'):
+            if mode == 'fairscale_0':
+                wrapper = partial(checkpoint_wrapper_fairscale, offload_to_cpu=True)
+            else:
+                wrapper = partial(checkpoint_wrapper_fairscale, offload_to_cpu=False)
+        else:
+            raise ValueError(mode)
+
+        def check_fn(submodule: nn.Module):
+            return isinstance(submodule, modules)
+
+        apply_activation_checkpointing_wrapper(
+            model,
+            checkpoint_wrapper_fn=wrapper,
+            check_fn=check_fn,
+        )
+
 
     def configure_sharded_model(self):
         '''
@@ -522,6 +559,11 @@ class LatentDiffusion(DDPM):
                 transformer_layer_cls=(TimestepEmbedSequential,),)
             wrap(self.model, auto_wrap_policy=unet_wrap_policy)
             wrap(self.model_ema, auto_wrap_policy=unet_wrap_policy)
+            for k, v in self.named_buffers():
+                setattr(self, k, v.to(self.trainer.strategy.root_device))
+        modules = (ResBlock, SpatialTransformer, AttentionBlock)
+        self.apply_activation_checkpointing(self.model, modules, 'native_0')
+        self.apply_activation_checkpointing(self.model_ema, modules, 'native_0')
 
     @rank_zero_only
     @torch.no_grad()

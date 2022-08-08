@@ -88,7 +88,7 @@ class AvidSuperRes(Dataset):
         image = Image.open(example['path'])
         if not image.mode == 'RGB':
             image = image.convert('RGB')
-        image = np.array(image).astype(np.unit8)
+        image = np.array(image).astype(np.uint8)
         min_side_len = min(image.shape[:2])
         crop_side_len = min_side_len * np.random.uniform(self.min_crop_f, self.max_crop_f, size=None)
         crop_side_len = int(crop_side_len)
@@ -121,12 +121,12 @@ class AvidSuperRes(Dataset):
 class AvidSuperResTrain(AvidSuperRes):
 
     def __init__(self, **kwargs):
-        kwargs.update({ 'names': ['Limit100'] })
+        kwargs.update({ 'names': ['Debug'] })
         super().__init__(**kwargs)
 
 
 class AvidSuperResValidation(AvidSuperRes):
 
     def __init__(self, **kwargs):
-        kwargs.update({ 'names': ['Random'] })
+        kwargs.update({ 'names': ['Debug'] })
         super().__init__(**kwargs)

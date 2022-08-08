@@ -18,6 +18,7 @@ class LitEmaGnrl(nn.Module):
             raise ValueError('Decay must be between 0 and 1')
 
         self.model = copy.deepcopy(model)
+        self.model.requires_grad_(False)
         self.decay = decay
         self.num_updates = 0 if use_num_updates else -1
 

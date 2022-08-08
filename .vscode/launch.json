@@ -64,6 +64,7 @@
             ],
             "env": {
                 "AVID_ROOT_DIR": "/mnt/azureml/cr/j/dc351b51bd13418788a0e2ec2fa76999/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data/avidxchange/",
+                "CUDA_LAUNCH_BLOCKING": "1"
             },
             "justMyCode": false
         },
