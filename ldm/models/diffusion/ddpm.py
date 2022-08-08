@@ -31,7 +31,6 @@ from torchvision.transforms import Normalize, Compose
 from typing import Any, Callable, Dict, List, Tuple, Union
 from pytorch_lightning.utilities.distributed import rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy
-from deepspeed.ops.adam import DeepSpeedCPUAdam
 from ldm.modules.attention import BasicTransformerBlock
 from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, TimestepEmbedSequential
 
@@ -1734,6 +1733,7 @@ class LatentDiffusion(DDPM):
             print('Diffusion model optimizing logvar')
             params.append(self.logvar)
         if self.deepspeed_offload:
+            from deepspeed.ops.adam import DeepSpeedCPUAdam
             opt = DeepSpeedCPUAdam(params, lr=lr)
         else:
             opt = torch.optim.AdamW(params, lr=lr)

@@ -1,4 +1,3 @@
-import deepspeed
 import math
 import numpy as np
 import torch as th
@@ -276,6 +275,7 @@ class ResBlock(TimestepBlock):
         if self.checkpoint == 'custom':
             return checkpoint(self._forward, (x, emb), self.parameters(), True)
         elif self.checkpoint == 'deepspeed':
+            import deepspeed
             return deepspeed.checkpointing.checkpoint(self._forward, x, emb)
         else:
             return self._forward(x, emb)

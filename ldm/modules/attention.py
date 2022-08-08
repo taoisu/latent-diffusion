@@ -1,4 +1,3 @@
-import deepspeed
 import math
 import torch
 
@@ -255,6 +254,7 @@ class BasicTransformerBlock(nn.Module):
         if self.checkpoint == 'custom':
             return checkpoint(self._forward, (x, context), self.parameters(), True)
         elif self.checkpoint == 'deepspeed':
+            import deepspeed
             return deepspeed.checkpointing.checkpoint(self._forward, x, context)
         else:
             return self._forward(x, context)
