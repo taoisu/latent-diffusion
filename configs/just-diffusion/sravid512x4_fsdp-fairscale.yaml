@@ -20,7 +20,7 @@ model:
           image_size: 128
           in_channels: 6
           out_channels: 3
-          model_channels: 192
+          model_channels: 160
           attention_resolutions: [16, 8]
           num_res_blocks: 2
           channel_mult: [1, 2, 2, 4]
@@ -33,7 +33,7 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 4
+    batch_size: 6
     wrap: false
     num_workers: 32
     train:
@@ -69,4 +69,4 @@ lightning:
     benchmark: True
     max_epochs: -1
     precision: 16
-    strategy: fsdp_native
+    strategy: fsdp

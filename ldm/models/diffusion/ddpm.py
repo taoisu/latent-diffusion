@@ -17,10 +17,10 @@ from torch import Tensor
 from torch.optim.lr_scheduler import LambdaLR
 from einops import rearrange, repeat
 from contextlib import contextmanager
-from fairscale.nn import checkpoint_wrapper as checkpoint_wrapper_fairscale
+from fairscale.nn import checkpoint_wrapper as checkpoint_wrapper_fairscale, auto_wrap as auto_wrap_fairscale
 from functools import partial
 from tqdm import tqdm
-from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, wrap
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, wrap as wrap_native
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     apply_activation_checkpointing_wrapper,
     CheckpointImpl,
@@ -30,8 +30,8 @@ from torchvision.utils import make_grid
 from torchvision.transforms import Normalize, Compose
 from typing import Any, Callable, Dict, List, Tuple, Union
 from pytorch_lightning.utilities.distributed import rank_zero_only
-from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy
-from ldm.modules.attention import BasicTransformerBlock
+from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy, DDPFullyShardedStrategy
+from ldm.modules.attention import BasicTransformerBlock, SpatialTransformer
 from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, TimestepEmbedSequential
 
 from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
@@ -547,21 +547,44 @@ class LatentDiffusion(DDPM):
             check_fn=check_fn,
         )
 
-
     def configure_sharded_model(self):
         '''
         hook gets called by lightning within the enable_wrap context manager
         '''
+        modules = (ResBlock, BasicTransformerBlock, AttentionBlock)
         if isinstance(self.trainer.strategy, DDPFullyShardedNativeStrategy):
+            # for some reason fsdp native is not working properly as of PyTorch 1.12.1, by 'not properly' I mean two things
+            # 1) the memory usage is very high 2) the ddp is having trouble working together with checkpointing
+            # I still keep the impl here for later revisit. Before the issue is resolved fairscale fsdp is preferred.
+            self.apply_activation_checkpointing(self.model, modules, 'native_2')
+            self.apply_activation_checkpointing(self.model_ema, modules, 'native_2')
             unet_wrap_policy = partial(
                 transformer_auto_wrap_policy,
-                transformer_layer_cls=(TimestepEmbedSequential,),)
-            wrap(self.model, auto_wrap_policy=unet_wrap_policy)
-            wrap(self.model_ema, auto_wrap_policy=unet_wrap_policy)
+                transformer_layer_cls=(TimestepEmbedSequential,))
+            wrap_native(self.model, auto_wrap_policy=unet_wrap_policy)
+            wrap_native(self.model_ema, auto_wrap_policy=unet_wrap_policy)
             self.to(self.trainer.strategy.root_device)
-        modules = (ResBlock, BasicTransformerBlock, AttentionBlock)
-        self.apply_activation_checkpointing(self.model, modules, 'native_2')
-        self.apply_activation_checkpointing(self.model_ema, modules, 'native_2')
+        elif isinstance(self.trainer.strategy, DDPFullyShardedStrategy):
+            def recursive_to_device(module:nn.Module, modules:Tuple[nn.Module], device:torch.device):
+                if isinstance(module, modules):
+                    module.to(device)
+                    return
+                else:
+                    for _, sub_module in module.named_children():
+                        recursive_to_device(sub_module, modules, device)
+            self.to(self.trainer.strategy.root_device)
+            recursive_to_device(self.model, (TimestepEmbedSequential,), torch.device('cpu'))
+            recursive_to_device(self.model_ema, (TimestepEmbedSequential,), torch.device('cpu'))
+            self.apply_activation_checkpointing(self.model, modules, 'fairscale_0')
+            self.apply_activation_checkpointing(self.model_ema, modules, 'fairscale_0')
+            def unet_wrap_policy(
+                module: nn.Module,
+                recurse: bool,
+                **kwargs) -> bool:
+                return True if recurse else isinstance(module, (TimestepEmbedSequential,))
+            auto_wrap_fairscale(self.model, auto_wrap_policy=unet_wrap_policy, cpu_offload=True)
+            auto_wrap_fairscale(self.model_ema, auto_wrap_policy=unet_wrap_policy, cpu_offload=True)
+            self.trainer.strategy.cpu_offload = True
 
     @rank_zero_only
     @torch.no_grad()

@@ -46,20 +46,20 @@ class LitEmaGnrl(nn.Module):
         m_new_ps = dict(model.named_parameters())
         m_old_ps = dict(self.model.named_parameters())
         for k in m_new_ps:
-            m_new_ps[k].data.copy_(m_old_ps[k].data)
+            m_new_ps[k].copy_(m_old_ps[k])
 
     def store(
         self,
         params:Iterable[nn.Parameter],
     ):
-        self.cache_params = [param.clone() for param in params]
+        self.cache_params = [param.clone().to('cpu') for param in params]
 
     def restore(
         self,
         params:Iterable[nn.Parameter],
     ):
         for c_p, n_p in zip(self.cache_params, params):
-            n_p.data.copy_(c_p.data)
+            n_p.copy_(c_p.to(n_p.device))
 
 
 class LitEma(nn.Module):
