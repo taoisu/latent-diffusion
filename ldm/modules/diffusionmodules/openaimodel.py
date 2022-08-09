@@ -1,4 +1,3 @@
-import deepspeed
 import math
 import numpy as np
 import torch as th
@@ -8,6 +7,9 @@ import torch.nn.functional as F
 from abc import abstractmethod
 from torch import Tensor
 from typing import List, Tuple, Union
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    CheckpointWrapper,
+)
 
 from ldm.modules.diffusionmodules.util import (
     checkpoint,
@@ -20,8 +22,6 @@ from ldm.modules.diffusionmodules.util import (
 )
 from ldm.modules.attention import SpatialTransformer
 from omegaconf.listconfig import ListConfig
-
-from ldm.util import wrap_ckpt
 
 
 # dummy replace
@@ -83,9 +83,12 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
 
     def forward(self, x:Tensor, emb:Tensor, context:Tensor=None):
         for layer in self:
-            if isinstance(layer, TimestepBlock):
+            true_layer = layer
+            if isinstance(true_layer, CheckpointWrapper):
+                true_layer = layer._checkpoint_wrapped_module
+            if isinstance(true_layer, TimestepBlock):
                 x = layer(x, emb)
-            elif isinstance(layer, SpatialTransformer):
+            elif isinstance(true_layer, SpatialTransformer):
                 x = layer(x, context)
             else:
                 x = layer(x)
@@ -182,7 +185,6 @@ class Downsample(nn.Module):
         return self.op(x)
 
 
-@wrap_ckpt
 class ResBlock(TimestepBlock):
     """
     A residual block that can optionally change the number of channels.
@@ -273,9 +275,8 @@ class ResBlock(TimestepBlock):
         if self.checkpoint == 'custom':
             return checkpoint(self._forward, (x, emb), self.parameters(), True)
         elif self.checkpoint == 'deepspeed':
+            import deepspeed
             return deepspeed.checkpointing.checkpoint(self._forward, x, emb)
-        elif self.checkpoint == 'native':
-            raise NotImplementedError()
         else:
             return self._forward(x, emb)
 
@@ -317,7 +318,7 @@ class AttentionBlock(nn.Module):
         channels:int,
         num_heads:int=1,
         num_head_channels:int=-1,
-        use_checkpoint:bool=False,
+        checkpoint:str=None,
         use_new_attention_order:bool=False,
         skip_rescale:bool=False,
     ):
@@ -330,7 +331,7 @@ class AttentionBlock(nn.Module):
                 channels % num_head_channels == 0
             ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
             self.num_heads = channels // num_head_channels
-        self.use_checkpoint = use_checkpoint
+        self.checkpoint = checkpoint
         self.norm = normalization(channels)
         self.qkv = conv_nd(1, channels, channels * 3, 1)
         if use_new_attention_order:
@@ -344,7 +345,10 @@ class AttentionBlock(nn.Module):
         self.skip_rescale = skip_rescale
 
     def forward(self, x:Tensor):
-        return checkpoint(self._forward, (x,), self.parameters(), True)   # TODO: check checkpoint usage, is True # TODO: fix the .half call!!!
+        if self.checkpoint == 'custom':
+            return checkpoint(self._forward, (x,), self.parameters(), True)   # TODO: check checkpoint usage, is True # TODO: fix the .half call!!!
+        else:
+            return self._forward(x)
 
     def _forward(self, x:Tensor):
         b, c, *spatial = x.shape
@@ -485,7 +489,7 @@ class UNetModel(nn.Module):
         conv_resample:bool=True,
         dims:int=2,
         num_classes:int=None,
-        use_checkpoint:bool=False,
+        checkpoint:str=None,
         use_fp16:bool=False,
         num_heads:int=-1,
         num_head_channels:int=-1,
@@ -528,7 +532,7 @@ class UNetModel(nn.Module):
         self.channel_mult = channel_mult
         self.conv_resample = conv_resample
         self.num_classes = num_classes
-        self.use_checkpoint = use_checkpoint
+        self.checkpoint = checkpoint
         self.dtype = th.float16 if use_fp16 else th.float32
         self.num_heads = num_heads
         self.num_head_channels = num_head_channels
@@ -566,7 +570,7 @@ class UNetModel(nn.Module):
                         dropout,
                         out_channels=mult*model_channels,
                         dims=dims,
-                        use_checkpoint=use_checkpoint,
+                        checkpoint=checkpoint,
                         use_scale_shift_norm=use_scale_shift_norm,
                         skip_rescale=skip_rescale,
                     )
@@ -583,7 +587,7 @@ class UNetModel(nn.Module):
                     layers.append(
                         AttentionBlock(
                             ch,
-                            use_checkpoint=use_checkpoint,
+                            checkpoint=checkpoint,
                             num_heads=num_heads,
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
@@ -610,7 +614,7 @@ class UNetModel(nn.Module):
                             dropout,
                             out_channels=out_ch,
                             dims=dims,
-                            use_checkpoint=use_checkpoint,
+                            checkpoint=checkpoint,
                             use_scale_shift_norm=use_scale_shift_norm,
                             down=True,
                             skip_rescale=skip_rescale,
@@ -644,12 +648,12 @@ class UNetModel(nn.Module):
                 time_embed_dim,
                 dropout,
                 dims=dims,
-                use_checkpoint=use_checkpoint,
+                checkpoint=checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
             AttentionBlock(
                 ch,
-                use_checkpoint=use_checkpoint,
+                checkpoint=checkpoint,
                 num_heads=num_heads,
                 num_head_channels=dim_head,
                 use_new_attention_order=use_new_attention_order,
@@ -665,7 +669,7 @@ class UNetModel(nn.Module):
                 time_embed_dim,
                 dropout,
                 dims=dims,
-                use_checkpoint=use_checkpoint,
+                checkpoint=checkpoint,
                 use_scale_shift_norm=use_scale_shift_norm,
             ),
         )
@@ -682,7 +686,7 @@ class UNetModel(nn.Module):
                         dropout,
                         out_channels=model_channels * mult,
                         dims=dims,
-                        use_checkpoint=use_checkpoint,
+                        checkpoint=checkpoint,
                         use_scale_shift_norm=use_scale_shift_norm,
                     )
                 ]
@@ -698,7 +702,7 @@ class UNetModel(nn.Module):
                     layers.append(
                         AttentionBlock(
                             ch,
-                            use_checkpoint=use_checkpoint,
+                            checkpoint=checkpoint,
                             num_heads=num_heads_upsample,
                             num_head_channels=dim_head,
                             use_new_attention_order=use_new_attention_order,
@@ -719,7 +723,7 @@ class UNetModel(nn.Module):
                             dropout,
                             out_channels=out_ch,
                             dims=dims,
-                            use_checkpoint=use_checkpoint,
+                            checkpoint=checkpoint,
                             use_scale_shift_norm=use_scale_shift_norm,
                             up=True,
                         )

@@ -760,6 +760,10 @@ if __name__ == "__main__":
             }
             default_callbacks_cfg.update(default_metrics_over_trainsteps_ckpt_dict)
 
+        for key in callbacks_cfg.keys():
+            if key in default_callbacks_cfg:
+                print(f'Remove {key} in default_callbacks_cfg in favor of user defined cfg')
+                del default_callbacks_cfg[key]
         callbacks_cfg = OmegaConf.merge(default_callbacks_cfg, callbacks_cfg)
         if 'ignore_keys_callback' in callbacks_cfg and hasattr(trainer_opt, 'resume_from_checkpoint'):
             callbacks_cfg.ignore_keys_callback.params['ckpt_path'] = trainer_opt.resume_from_checkpoint

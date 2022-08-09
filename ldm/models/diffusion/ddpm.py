@@ -10,23 +10,32 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pytorch_lightning as pl
+import torch.nn.functional as F
 
 from copy import deepcopy
 from torch import Tensor
 from torch.optim.lr_scheduler import LambdaLR
 from einops import rearrange, repeat
 from contextlib import contextmanager
+from fairscale.nn import checkpoint_wrapper as checkpoint_wrapper_fairscale, auto_wrap as auto_wrap_fairscale
 from functools import partial
 from tqdm import tqdm
+from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, wrap as wrap_native
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    apply_activation_checkpointing_wrapper,
+    CheckpointImpl,
+    checkpoint_wrapper as checkpoint_wrapper_native,
+)
 from torchvision.utils import make_grid
 from torchvision.transforms import Normalize, Compose
 from typing import Any, Callable, Dict, List, Tuple, Union
 from pytorch_lightning.utilities.distributed import rank_zero_only
-from pytorch_lightning.strategies import DeepSpeedStrategy
-from deepspeed.ops.adam import DeepSpeedCPUAdam
+from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy, DDPFullyShardedStrategy
+from ldm.modules.attention import BasicTransformerBlock, SpatialTransformer
+from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, TimestepEmbedSequential
 
 from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
-from ldm.modules.ema import LitEma
+from ldm.modules.ema import LitEma, LitEmaGnrl
 from ldm.modules.distributions.distributions import normal_kl, DiagonalGaussianDistribution
 from ldm.models.autoencoder import VQModelInterface, IdentityFirstStage, AutoencoderKL
 from ldm.modules.diffusionmodules.util import make_beta_schedule, extract_into_tensor, noise_like
@@ -100,8 +109,8 @@ class DDPM(pl.LightningModule):
         count_params(self.model, verbose=True)
         self.use_ema = use_ema
         if self.use_ema:
-            self.model_ema = LitEma(self.model)
-            print(f"Keeping EMAs of {len(list(self.model_ema.buffers()))}.")
+            self.model_ema = LitEmaGnrl(self.model)
+            print(f"Keeping EMAs of {len(list(self.model_ema.parameters()))}.")
 
         self.use_scheduler = scheduler_config is not None
         if self.use_scheduler:
@@ -132,8 +141,7 @@ class DDPM(pl.LightningModule):
 
         self.learn_logvar = learn_logvar
         self.logvar = torch.full(fill_value=logvar_init, size=(self.num_timesteps,))
-        if self.learn_logvar:
-            self.logvar = nn.Parameter(self.logvar, requires_grad=True)
+        self.logvar = nn.Parameter(self.logvar, requires_grad=self.learn_logvar)
 
 
     def register_schedule(
@@ -502,10 +510,81 @@ class LatentDiffusion(DDPM):
             self.init_from_ckpt(ckpt_path, ignore_keys)
             self.restarted_from_ckpt = True
 
-    def make_cond_schedule(self, ):
+    def make_cond_schedule(self):
         self.cond_ids = torch.full(size=(self.num_timesteps,), fill_value=self.num_timesteps - 1, dtype=torch.long)
         ids = torch.round(torch.linspace(0, self.num_timesteps - 1, self.num_timesteps_cond)).long()
         self.cond_ids[:self.num_timesteps_cond] = ids
+
+    def apply_activation_checkpointing(
+        self,
+        model:nn.Module,
+        modules:Tuple[nn.Module],
+        mode:str):
+        '''
+        :param mode: one of 'native_0|native_1|native_2|fairscale_0|fairscale_1'
+        '''
+        if mode.startswith('native_'):
+            if mode == 'native_0':
+                wrapper = partial(checkpoint_wrapper_native, checkpoint_impl=CheckpointImpl.REENTRANT, offload_to_cpu=True)
+            elif mode == 'native_1':
+                wrapper = partial(checkpoint_wrapper_native, checkpoint_impl=CheckpointImpl.REENTRANT, offload_to_cpu=False)
+            else:
+                wrapper = partial(checkpoint_wrapper_native, checkpoint_impl=CheckpointImpl.NO_REENTRANT)
+        elif mode.startswith('fairscale_'):
+            if mode == 'fairscale_0':
+                wrapper = partial(checkpoint_wrapper_fairscale, offload_to_cpu=True)
+            else:
+                wrapper = partial(checkpoint_wrapper_fairscale, offload_to_cpu=False)
+        else:
+            raise ValueError(mode)
+
+        def check_fn(submodule: nn.Module):
+            return isinstance(submodule, modules)
+
+        apply_activation_checkpointing_wrapper(
+            model,
+            checkpoint_wrapper_fn=wrapper,
+            check_fn=check_fn,
+        )
+
+    def configure_sharded_model(self):
+        '''
+        hook gets called by lightning within the enable_wrap context manager
+        '''
+        modules = (ResBlock, BasicTransformerBlock, AttentionBlock)
+        if isinstance(self.trainer.strategy, DDPFullyShardedNativeStrategy):
+            # for some reason fsdp native is not working properly as of PyTorch 1.12.1, by 'not properly' I mean two things
+            # 1) the memory usage is very high 2) the ddp is having trouble working together with checkpointing
+            # I still keep the impl here for later revisit. Before the issue is resolved fairscale fsdp is preferred.
+            self.apply_activation_checkpointing(self.model, modules, 'native_2')
+            self.apply_activation_checkpointing(self.model_ema, modules, 'native_2')
+            unet_wrap_policy = partial(
+                transformer_auto_wrap_policy,
+                transformer_layer_cls=(TimestepEmbedSequential,))
+            wrap_native(self.model, auto_wrap_policy=unet_wrap_policy)
+            wrap_native(self.model_ema, auto_wrap_policy=unet_wrap_policy)
+            self.to(self.trainer.strategy.root_device)
+        elif isinstance(self.trainer.strategy, DDPFullyShardedStrategy):
+            def recursive_to_device(module:nn.Module, modules:Tuple[nn.Module], device:torch.device):
+                if isinstance(module, modules):
+                    module.to(device)
+                    return
+                else:
+                    for _, sub_module in module.named_children():
+                        recursive_to_device(sub_module, modules, device)
+            self.to(self.trainer.strategy.root_device)
+            recursive_to_device(self.model, (TimestepEmbedSequential,), torch.device('cpu'))
+            recursive_to_device(self.model_ema, (TimestepEmbedSequential,), torch.device('cpu'))
+            self.apply_activation_checkpointing(self.model, modules, 'fairscale_0')
+            self.apply_activation_checkpointing(self.model_ema, modules, 'fairscale_0')
+            def unet_wrap_policy(
+                module: nn.Module,
+                recurse: bool,
+                **kwargs) -> bool:
+                return True if recurse else isinstance(module, (TimestepEmbedSequential,))
+            auto_wrap_fairscale(self.model, auto_wrap_policy=unet_wrap_policy, cpu_offload=True)
+            auto_wrap_fairscale(self.model_ema, auto_wrap_policy=unet_wrap_policy, cpu_offload=True)
+            self.trainer.strategy.cpu_offload = True
 
     @rank_zero_only
     @torch.no_grad()
@@ -738,6 +817,9 @@ class LatentDiffusion(DDPM):
                     xc = batch
                 elif cond_key == 'patch':
                     xc = batch
+                elif cond_key == 'lr_image':
+                    xc = super().get_input(batch, cond_key).to(self.device)
+                    xc = F.interpolate(xc, tuple(x.shape[-2:]), mode="bilinear")
                 else:
                     xc = super().get_input(batch, cond_key).to(self.device)
             else:
@@ -1674,6 +1756,7 @@ class LatentDiffusion(DDPM):
             print('Diffusion model optimizing logvar')
             params.append(self.logvar)
         if self.deepspeed_offload:
+            from deepspeed.ops.adam import DeepSpeedCPUAdam
             opt = DeepSpeedCPUAdam(params, lr=lr)
         else:
             opt = torch.optim.AdamW(params, lr=lr)
