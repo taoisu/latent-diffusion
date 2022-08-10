@@ -10,7 +10,7 @@ model:
     loss_type: l2
     first_stage_key: image
     cond_stage_key: lr_image
-    image_size: 128
+    image_size: 512
     channels: 3
     concat_mode: true
     cond_stage_trainable: false
@@ -42,16 +42,16 @@ data:
         size: 512
         degradation: bsrgan_light
         downscale_f: 4
-        min_crop_f: 0.5
-        max_crop_f: 1.0
+        min_crop_f: 0.1
+        max_crop_f: 0.25
     validation:
       target: ldm.data.avid.AvidSuperResValidation
       params:
         size: 512
         degradation: bsrgan_light
         downscale_f: 4
-        min_crop_f: 0.5
-        max_crop_f: 1.0
+        min_crop_f: 0.1
+        max_crop_f: 0.25
 lightning:
   callbacks:
     image_logger:
