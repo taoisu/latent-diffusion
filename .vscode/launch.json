@@ -55,7 +55,7 @@
             "program": "main.py",
             "args": [
                 "--base",
-                "configs/just-diffusion/sravid512x4_fsdp-native.yaml",
+                "configs/just-diffusion/sravid512x4_fsdp-fairscale.yaml",
                 "--accelerator",
                 "gpu",
                 "--devices",
@@ -63,7 +63,7 @@
                 "-t",
             ],
             "env": {
-                "AVID_ROOT_DIR": "/mnt/azureml/cr/j/dc351b51bd13418788a0e2ec2fa76999/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data/avidxchange/",
+                "AVID_ROOT_DIR": "/mnt/azureml/cr/j/34a4dabfdca34ff1845f8b0ae0a9caee/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data/avidxchange/",
                 "CUDA_LAUNCH_BLOCKING": "1"
             },
             "justMyCode": false

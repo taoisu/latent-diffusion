@@ -1505,7 +1505,6 @@ class LatentDiffusion(DDPM):
         plot_diffusion_rows:bool=True,
         **kwargs,
     ):
-
         use_ddim = ddim_steps is not None
 
         log = dict()
@@ -1532,6 +1531,8 @@ class LatentDiffusion(DDPM):
                 log['conditioning'] = xc
             elif self.cond_stage_key == 'patch':
                 log['patch'] = self.patch_to_rgb(batch['patch'])
+            elif self.cond_stage_key == 'lr_image':
+                log['lr_image_upsampled'] = xc
             elif isimage(xc):
                 log["conditioning"] = xc
             if ismap(xc):
