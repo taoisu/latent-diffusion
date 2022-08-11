@@ -10,6 +10,9 @@ from torch import Tensor
 from typing import Dict
 from einops import rearrange, repeat
 
+from transformers import AutoTokenizer
+from transformers.models.t5.modeling_t5 import T5Block, T5EncoderModel
+
 
 from ldm.modules.x_transformer import Encoder, TransformerWrapper  # TODO: can we directly rely on lucidrains code and simply add this as a reuirement? --> test
 
@@ -225,6 +228,30 @@ class SpatialRescaler(nn.Module):
 
     def encode(self, x):
         return self(x)
+
+
+class FrozenPretrainedTextEmbedder(AbstractEncoder):
+    '''
+    Use pretrained huggingface transformer text encoder
+    '''
+    def __init__(
+        self,
+        model_name:str,
+    ):
+        super().__init__()
+        if model_name.startswith('google/t5'):
+            self.model = T5EncoderModel.from_pretrained(model_name, low_cpu_mem_usage=True)
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.fsdp_cls = (T5Block,)
+            self.ckpt_cls = (T5Block,)
+        else:
+            raise ValueError()
+
+    def forward(self, text):
+        pass
+
+    def encode(self, text):
+        pass
 
 
 class FrozenCLIPTextEmbedder(nn.Module):
