@@ -22,6 +22,7 @@ from ldm.modules.diffusionmodules.util import (
 )
 from ldm.modules.attention import SpatialTransformer
 from omegaconf.listconfig import ListConfig
+from typing import Dict
 
 
 # dummy replace
@@ -500,6 +501,7 @@ class UNetModel(nn.Module):
         use_spatial_transformer:bool=False,         # custom transformer support
         transformer_depth:int=1,                    # custom transformer support
         context_dim:Union[int,ListConfig]=None,     # custom transformer support
+        contexts:Dict=None,
         n_embed:int=None,                           # custom support for prediction of discrete ids into codebook of first stage vq model
         legacy:bool=True,
         skip_rescale:bool=False,
@@ -538,6 +540,7 @@ class UNetModel(nn.Module):
         self.num_head_channels = num_head_channels
         self.num_heads_upsample = num_heads_upsample
         self.predict_codebook_ids = n_embed is not None
+        self.contexts = contexts
         self.skip_rescale = skip_rescale
 
         time_embed_dim = model_channels * 4
@@ -546,6 +549,17 @@ class UNetModel(nn.Module):
             nn.SiLU(),
             linear(time_embed_dim, time_embed_dim),
         )
+
+        if contexts is not None:
+            for key, val in self.contexts.items():
+                seq_dim = val['seq_dim']
+                pooled_dim = val['pooled_dim']
+                self.register_module(
+                    f'{key}_crossattn_proj',
+                    linear(seq_dim, context_dim, bias=False) if seq_dim != context_dim else nn.Identity())
+                self.register_module(
+                    f'{key}_emb_proj',
+                    linear(pooled_dim, time_embed_dim, bias=False) if pooled_dim != time_embed_dim else nn.Identity())
 
         if self.num_classes is not None:
             self.label_emb = nn.Embedding(num_classes, time_embed_dim)
@@ -792,6 +806,18 @@ class UNetModel(nn.Module):
         if self.num_classes is not None:
             assert y.shape == (x.shape[0],)
             emb = emb + self.label_emb(y)
+
+        if isinstance(context, Dict):
+            crossattn_context = []
+            for key, val in context.items():
+                if 'emb' in val:
+                    proj_module = getattr(self, f'{key}_emb_proj')
+                    emb += proj_module(val['emb'])
+                if 'crossattn' in val:
+                    proj_module = getattr(self, f'{key}_crossattn_proj')
+                    crossattn_context.append(proj_module(val['crossattn']))
+            crossattn_context = th.cat(crossattn_context, dim=1)
+            context = crossattn_context
 
         h = x.type(self.dtype)
         for module in self.input_blocks:

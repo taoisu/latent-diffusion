@@ -13,14 +13,14 @@ model:
     image_size: 128
     channels: 3
     cond_stage_trainable: false
-    conditioning_key: crossattn
+    conditioning_key: tybrid
     monitor: val/loss_simple_ema
     unet_config:
       target: ldm.modules.diffusionmodules.openaimodel.UNetModel
       params:
         image_size: 128
-        in_channels: 4
-        out_channels: 4
+        in_channels: 3
+        out_channels: 3
         model_channels: 256
         attention_resolutions: [16, 8, 4]
         num_res_blocks: 2
@@ -28,7 +28,11 @@ model:
         num_heads: 8
         use_spatial_transformer: true
         transformer_depth: 1
-        context_dim: 1280
+        context_dim: 1024
+        contexts:
+          caption:
+            seq_dim: 4096
+            pooled_dim: 4096
     first_stage_config:
       target: ldm.models.autoencoder.IdentityFirstStage
     cond_stage_config:
@@ -51,7 +55,7 @@ data:
       params:
         size: 128
         name: laion/laion2B-en-aesthetic
-        subset_size: 1024
+        ratio: 0.0001
 lightning:
   callbacks:
     image_logger:
