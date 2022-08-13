@@ -33,6 +33,7 @@ from pytorch_lightning.utilities.distributed import rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy, DDPFullyShardedStrategy
 from ldm.modules.attention import BasicTransformerBlock, SpatialTransformer
 from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, TimestepEmbedSequential
+from ldm.modules.encoders.modules import FrozenPretrainedTextEmbedder
 
 from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
 from ldm.modules.ema import LitEma, LitEmaGnrl
@@ -110,7 +111,7 @@ class DDPM(pl.LightningModule):
         self.use_ema = use_ema
         if self.use_ema:
             self.model_ema = LitEmaGnrl(self.model)
-            print(f"Keeping EMAs of {len(list(self.model_ema.parameters()))}.")
+            print(f"Keeping EMAs of {len(list(self.model_ema.parameters()))} params.")
 
         self.use_scheduler = scheduler_config is not None
         if self.use_scheduler:
@@ -573,8 +574,9 @@ class LatentDiffusion(DDPM):
                     for _, sub_module in module.named_children():
                         recursive_to_device(sub_module, modules, device)
             self.to(self.trainer.strategy.root_device)
-            recursive_to_device(self.model, (TimestepEmbedSequential,), torch.device('cpu'))
-            recursive_to_device(self.model_ema, (TimestepEmbedSequential,), torch.device('cpu'))
+            dev_cpu = torch.device('cpu')
+            recursive_to_device(self.model, (TimestepEmbedSequential,), dev_cpu)
+            recursive_to_device(self.model_ema, (TimestepEmbedSequential,), dev_cpu)
             self.apply_activation_checkpointing(self.model, modules, 'fairscale_0')
             self.apply_activation_checkpointing(self.model_ema, modules, 'fairscale_0')
             def unet_wrap_policy(
@@ -584,6 +586,14 @@ class LatentDiffusion(DDPM):
                 return True if recurse else isinstance(module, (TimestepEmbedSequential,))
             auto_wrap_fairscale(self.model, auto_wrap_policy=unet_wrap_policy, cpu_offload=True)
             auto_wrap_fairscale(self.model_ema, auto_wrap_policy=unet_wrap_policy, cpu_offload=True)
+            if isinstance(self.cond_stage_model, (FrozenPretrainedTextEmbedder,)):
+                fsdp_modules = self.cond_stage_model.fsdp_cls
+                recursive_to_device(self.cond_stage_model, fsdp_modules, dev_cpu)
+                self.cond_stage_model.root_device = self.trainer.strategy.root_device
+                ckpt_modules = self.cond_stage_model.ckpt_cls
+                self.apply_activation_checkpointing(self.cond_stage_model, ckpt_modules, 'fairscale_0')
+                fsdp_wrap_policy = self.cond_stage_model.fsdp_wrap_policy
+                auto_wrap_fairscale(self.cond_stage_model, auto_wrap_policy=fsdp_wrap_policy, cpu_offload=True)
             self.trainer.strategy.cpu_offload = True
 
     @rank_zero_only
@@ -1836,7 +1846,10 @@ class DiffusionWrapper(pl.LightningModule):
             cc = torch.cat(c_crossattn, 1)
             out = self.diffusion_model(xc, t, context=cc)
         elif self.conditioning_key == 'tybrid':
-            xc = torch.cat([x] + c_concat, dim=1)
+            if c_concat is not None:
+                xc = torch.cat([x] + c_concat, dim=1)
+            else:
+                xc = x
             context = {
                 c_name: {
                     'emb': c_eb,

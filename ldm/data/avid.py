@@ -45,6 +45,7 @@ class AvidSuperRes(Dataset):
             where c is sampled from interval (min_crop_f, max_crop_f)
         :param max_crop_f: explained above
         '''
+        super().__init__()
         self.base = self.get_base(names)
         assert size and (size / downscale_f).is_integer()
         self.size = size

@@ -7,9 +7,11 @@ import torch.nn as nn
 from einops import rearrange
 from functools import partial
 from torch import Tensor
-from typing import Dict
+from typing import Dict, List
 from einops import rearrange, repeat
 
+from transformers import AutoTokenizer
+from transformers.models.t5.modeling_t5 import T5Block, T5EncoderModel
 
 from ldm.modules.x_transformer import Encoder, TransformerWrapper  # TODO: can we directly rely on lucidrains code and simply add this as a reuirement? --> test
 
@@ -225,6 +227,59 @@ class SpatialRescaler(nn.Module):
 
     def encode(self, x):
         return self(x)
+
+
+class FrozenPretrainedTextEmbedder(AbstractEncoder):
+    '''
+    Use pretrained huggingface transformer text encoder
+    '''
+    def __init__(
+        self,
+        model_name:str,
+    ):
+        super().__init__()
+        if model_name.startswith('google/t5'):
+            self.model = T5EncoderModel.from_pretrained(model_name, low_cpu_mem_usage=True)
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.fsdp_cls = (T5Block,)
+            self.ckpt_cls = (T5Block,)
+        else:
+            raise ValueError()
+
+    def fsdp_wrap_policy(
+        self,
+        module: nn.Module,
+        recurse: bool,
+        **kwargs,
+    ) -> bool:
+        return True if recurse else isinstance(module, self.fsdp_cls)
+
+    def forward(self, **kwargs):
+        return self.model(**kwargs)
+
+    def encode(self, text:List[str]):
+        batch_size = len(text)
+        inputs = self.tokenizer(
+            text,
+            padding='longest',
+            return_tensors='pt',
+            truncation=True)
+        device = self.root_device if hasattr(self, 'root_device') else self.model.device
+        for k in inputs.keys():
+            inputs[k] = inputs[k].to(device)
+        outputs = self(**inputs)
+        last_hidden_state = outputs.last_hidden_state
+        eos_hidden_state_pos = inputs['attention_mask'].sum(dim=1) - 1
+        eos_hidden_state_pos = torch.clamp_min(eos_hidden_state_pos, 0)
+        eos_hidden_state = last_hidden_state[
+            torch.arange(0, batch_size, device=device),
+            eos_hidden_state_pos,
+        ]
+        return {
+            'c_crossattn': last_hidden_state,
+            'c_emb': eos_hidden_state,
+            'c_name': 'caption',
+        }
 
 
 class FrozenCLIPTextEmbedder(nn.Module):
