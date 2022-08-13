@@ -1,6 +1,8 @@
 import cv2
 import os
+import pickle
 import requests
+import torch
 
 import albumentations as al
 import numpy as np
@@ -100,28 +102,47 @@ class LaionTextToImage(Dataset):
     def __len__(self):
         return len(self.idx_map)
 
-    def get_disk_items(self):
+    def get_disk_items(self, idx_map_name:str=None):
         idx_map = {}
-        for i, path in enumerate(self.cache_dir.glob('*.jpg')):
-            idx = int(path.stem)
-            idx_map[i] = idx
+        if idx_map_name is None:
+            for i, path in enumerate(self.cache_dir.glob('*.jpg')):
+                idx = int(path.stem)
+                idx_map[i] = idx
+            worker_info = torch.utils.data.get_worker_info()
+            if worker_info is None or worker_info.id == 0:
+                print(f'cache idx_map with len {len(idx_map)}')
+                idx_map_name = f'idx_map_{len(idx_map)}'
+                with open(idx_map_path, 'wb') as f:
+                    pickle.dump(idx_map, f)
+        else:
+            idx_map_path = self.cache_dir / f'{idx_map_name}.pkl'
+            with open(idx_map_path, 'rb') as f:
+                idx_map = pickle.load(f)
+
         return idx_map
 
 
 class LaionTextToImageTrain(LaionTextToImage):
 
-    def __init__(self, no_download:bool=True, **kwargs):
+    def __init__(self,
+        no_download:bool=True,
+        idx_map_name:str=None,
+        **kwargs):
         super().__init__(**kwargs)
         if no_download:
-            self.idx_map = self.get_disk_items()
+            self.idx_map = self.get_disk_items(idx_map_name)
 
 
 class LaionTextToImageValidation(LaionTextToImage):
 
-    def __init__(self, no_download:bool=True, num_items:int=1024, **kwargs):
+    def __init__(self,
+        no_download:bool=True,
+        num_items:int=1024, 
+        idx_map_name:str=None,
+        **kwargs):
         super().__init__(**kwargs)
         if no_download:
-            self.idx_map = self.get_disk_items()
+            self.idx_map = self.get_disk_items(idx_map_name)
         keys = list(self.idx_map.keys())[:num_items]
         self.idx_map = { k: self.idx_map[k] for k in keys}
 
