@@ -152,7 +152,13 @@ def main():
         name='laion/laion2B-en-aesthetic',
         size=128,
         no_download=False)
-    dl = DataLoader(ds, batch_size=128, num_workers=os.cpu_count())
+    dl = DataLoader(ds, batch_size=128, num_workers=8)
+    # ds = LaionTextToImageTrain(
+    #     name='laion/laion2B-en-aesthetic',
+    #     size=128,
+    #     no_download=True,
+    #     idx_map_name='idx_map_1.3m')
+    # dl = DataLoader(ds, batch_size=128, num_workers=1)
     for _ in tqdm(dl):
         pass
 
