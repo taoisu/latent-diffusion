@@ -5,15 +5,31 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "ldm/data/laion.py",
+            "type": "python",
+            "request": "launch",
+            "program": "ldm/data/laion.py",
+            "console": "integratedTerminal",
+            "env": {
+                "LAION_ROOT_DIR": "/mnt/azureml/cr/j/34a4dabfdca34ff1845f8b0ae0a9caee/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data",
+                "CUDA_LAUNCH_BLOCKING": "1"
+            },
+            "justMyCode": false
+        },
+        {
             "name": "scripts/sample_patch_inpaint.py",
             "type": "python",
             "request": "launch",
             "program": "scripts/sample_patch_inpaint.py",
             "args": [
-                "-r", "/home/xiaguo/latent-diffusion/logs/2022-06-13T02-28-25_pin128/checkpoints/last.ckpt",
-                "-i", "data/patch_inpainting_examples",
-                "-o", "output",
-                "-s", "200"
+                "-r",
+                "/home/xiaguo/latent-diffusion/logs/2022-06-13T02-28-25_pin128/checkpoints/last.ckpt",
+                "-i",
+                "data/patch_inpainting_examples",
+                "-o",
+                "output",
+                "-s",
+                "200"
             ],
             "console": "integratedTerminal",
             "justMyCode": true
@@ -64,6 +80,26 @@
             ],
             "env": {
                 "AVID_ROOT_DIR": "/mnt/azureml/cr/j/34a4dabfdca34ff1845f8b0ae0a9caee/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data/avidxchange/",
+                "CUDA_LAUNCH_BLOCKING": "1"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "main.py - train txt2img laion2b",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "args": [
+                "--base",
+                "configs/just-diffusion/txt2imglaion2b128_fsdp-fairscale.yaml",
+                "--accelerator",
+                "gpu",
+                "--devices",
+                "0,1,2,3,4,5,6,7",
+                "-t",
+            ],
+            "env": {
+                "LAION_ROOT_DIR": "/mnt/azureml/cr/j/34a4dabfdca34ff1845f8b0ae0a9caee/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data",
                 "CUDA_LAUNCH_BLOCKING": "1"
             },
             "justMyCode": false

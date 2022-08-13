@@ -50,12 +50,13 @@ data:
       params:
         size: 128
         name: laion/laion2B-en-aesthetic
+        no_download: true
     validation:
       target: ldm.data.laion.LaionTextToImageValidation
       params:
         size: 128
         name: laion/laion2B-en-aesthetic
-        ratio: 0.0001
+        no_download: true
 lightning:
   callbacks:
     image_logger:
