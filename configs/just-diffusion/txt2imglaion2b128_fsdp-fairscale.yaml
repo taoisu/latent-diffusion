@@ -42,7 +42,7 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 6
+    batch_size: 16
     wrap: false
     num_workers: 32
     train:
@@ -51,6 +51,7 @@ data:
         size: 128
         name: laion/laion2B-en-aesthetic
         no_download: true
+        dropout: 0.2
     validation:
       target: ldm.data.laion.LaionTextToImageValidation
       params:

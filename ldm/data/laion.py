@@ -23,6 +23,7 @@ class LaionTextToImage(Dataset):
         self,
         name:str,
         size:int,
+        dropout:float=0.0,
     ):
         '''
         Laion TextToImage Dataset
@@ -38,6 +39,7 @@ class LaionTextToImage(Dataset):
         self.items = self.get_items(name)
         self.idx_map = { i: i for i in range(len(self.items)) }
         self.size = size
+        self.dropout = dropout
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def cache_item(self, idx:int, item:Dict):
@@ -74,6 +76,9 @@ class LaionTextToImage(Dataset):
         self.cropper = al.RandomCrop(height=min_side_len, width=min_side_len)
         image = self.cropper(image=image)['image']
         image = self.img_rescaler(image=image)['image']
+        image = (image/127.5-1.0).astype(np.float32)
+        if self.dropout > 0 and np.random.random() < self.dropout:
+            text = ""
         return {
             'caption': text,
             'image': image,
