@@ -11,7 +11,7 @@
             "program": "ldm/data/laion.py",
             "console": "integratedTerminal",
             "env": {
-                "LAION_ROOT_DIR": "/mnt/azureml/cr/j/34a4dabfdca34ff1845f8b0ae0a9caee/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data",
+                "LAION_ROOT_DIR": "/mnt/azureml/cr/j/e7b311519d7c4043a08cb526d5e52b57/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data",
                 "CUDA_LAUNCH_BLOCKING": "1"
             },
             "justMyCode": false
@@ -79,7 +79,7 @@
                 "-t",
             ],
             "env": {
-                "AVID_ROOT_DIR": "/mnt/azureml/cr/j/34a4dabfdca34ff1845f8b0ae0a9caee/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data/avidxchange/",
+                "AVID_ROOT_DIR": "/mnt/azureml/cr/j/e7b311519d7c4043a08cb526d5e52b57/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data/avidxchange/",
                 "CUDA_LAUNCH_BLOCKING": "1"
             },
             "justMyCode": false
@@ -99,7 +99,7 @@
                 "-t",
             ],
             "env": {
-                "LAION_ROOT_DIR": "/mnt/azureml/cr/j/34a4dabfdca34ff1845f8b0ae0a9caee/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data",
+                "LAION_ROOT_DIR": "/mnt/azureml/cr/j/e7b311519d7c4043a08cb526d5e52b57/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data",
                 "CUDA_LAUNCH_BLOCKING": "1"
             },
             "justMyCode": false
