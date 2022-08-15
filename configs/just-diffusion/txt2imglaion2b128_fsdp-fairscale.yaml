@@ -50,22 +50,20 @@ data:
       params:
         size: 128
         name: laion/laion2B-en-aesthetic
-        no_download: true
         dropout: 0.2
-        idx_map_name: idx_map_1.3m
+        idx_map_name: idx_map_2862193
     validation:
       target: ldm.data.laion.LaionTextToImageValidation
       params:
         size: 128
         name: laion/laion2B-en-aesthetic
-        no_download: true
-        idx_map_name: idx_map_1.3m
+        idx_map_name: idx_map_2862193
 lightning:
   callbacks:
     image_logger:
       target: main.ImageLogger
       params:
-        batch_frequency: 2500
+        batch_frequency: 1000
         increase_log_steps: false
         max_images: 8
         clamp: true
