@@ -42,7 +42,7 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 16
+    batch_size: 32
     wrap: false
     num_workers: 32
     train:
@@ -51,13 +51,13 @@ data:
         size: 128
         name: laion/laion2B-en-aesthetic
         dropout: 0.2
-        idx_map_name: idx_map_1.3m
+        idx_map_name: idx_map_2862193
     validation:
       target: ldm.data.laion.LaionTextToImageValidation
       params:
         size: 128
         name: laion/laion2B-en-aesthetic
-        idx_map_name: idx_map_1.3m
+        idx_map_name: idx_map_2862193
 lightning:
   callbacks:
     image_logger:
