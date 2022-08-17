@@ -37,7 +37,7 @@ class LitEmaGnrl(nn.Module):
             m_new_ps = dict(model.named_parameters())
             m_old_ps = dict(self.model.named_parameters())
             for k in m_new_ps:
-                m_old_ps[k].sub_(one_minus_decay*(m_new_ps[k]-m_old_ps[k]))
+                m_old_ps[k].sub_(one_minus_decay*(m_old_ps[k]-m_new_ps[k]))
 
     def copy_to(
         self,
