@@ -160,13 +160,18 @@ def download_dataset(name:str):
 
 
 def gen_idx_map(name:str):
+    assert name in [
+        'laion/laion2B-en-aesthetic',
+    ]
     cache_dir = Path(os.environ['LAION_ROOT_DIR']) / name
     idx_map = {}
     for i, jpg_path in tqdm(enumerate(cache_dir.glob('*.jpg'))):
         idx_map[i] = int(jpg_path.stem)
     num_imgs = len(idx_map)
-    with open(cache_dir / f'idx_map_{num_imgs}.pkl', 'wb') as f:
+    idx_map_name = f'idx_map_{num_imgs}.pkl'
+    with open(cache_dir / idx_map_name, 'wb') as f:
         pickle.dump(idx_map, f)
+    print(idx_map_name)
 
 
 def main(
