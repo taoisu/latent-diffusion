@@ -18,10 +18,10 @@ model:
     unet_config:
       target: ldm.modules.diffusionmodules.openaimodel.UNetModel
       params:
-        image_size: 128
+        image_size: 64
         in_channels: 3
         out_channels: 3
-        model_channels: 256
+        model_channels: 64
         attention_resolutions: [16, 8, 4]
         num_res_blocks: 2
         channel_mult: [1, 2, 4, 4]
@@ -31,14 +31,14 @@ model:
         context_dim: 1024
         contexts:
           caption:
-            seq_dim: 4096
-            pooled_dim: 4096
+            seq_dim: 512
+            pooled_dim: 512
     first_stage_config:
       target: ldm.models.autoencoder.IdentityFirstStage
     cond_stage_config:
       target: ldm.modules.encoders.modules.FrozenPretrainedTextEmbedder
       params:
-        model_name: google/t5-v1_1-xxl
+        model_name: google/t5-v1_1-small
 data:
   target: main.DataModuleFromConfig
   params:
@@ -48,16 +48,16 @@ data:
     train:
       target: ldm.data.laion.LaionTextToImageTrain
       params:
-        size: 128
+        size: 64
         name: laion/laion2B-en-aesthetic
         dropout: 0.2
-        idx_map_name: idx_map_2862193
+        idx_map_name: idx_map_1.3m
     validation:
       target: ldm.data.laion.LaionTextToImageValidation
       params:
-        size: 128
+        size: 64
         name: laion/laion2B-en-aesthetic
-        idx_map_name: idx_map_2862193
+        idx_map_name: idx_map_1.3m
 lightning:
   callbacks:
     image_logger:
