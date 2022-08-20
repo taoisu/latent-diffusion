@@ -281,6 +281,9 @@ class FrozenPretrainedTextEmbedder(AbstractEncoder):
             'c_name': 'caption',
         }
 
+    def state_dict(self, *args, destination=None, prefix='', keep_vars=False):
+        return {}
+
 
 class FrozenCLIPTextEmbedder(nn.Module):
     """
