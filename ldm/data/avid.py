@@ -1,5 +1,7 @@
 import cv2
+import fire
 import os
+import pickle
 import PIL
 
 import albumentations as al
@@ -9,6 +11,7 @@ import torchvision.transforms.functional as ttf
 from functools import partial
 from pathlib import Path
 from torch.utils.data import Dataset
+from tqdm import tqdm
 from typing import List
 
 from PIL import Image
@@ -114,20 +117,47 @@ class AvidSuperRes(Dataset):
         examples = []
         for folder_name in names:
             img_dir = root_dir / folder_name
-            for path in Path(img_dir).glob('*.jpg'):
-                examples.append({ 'path': str(path) })
+            flist_path = img_dir / 'flist.pkl'
+            if not flist_path.exists():
+                continue
+            with open(flist_path, 'rb') as f:
+                flist = pickle.load(f)
+            for fname in flist:
+                examples.append({ 'path': str(img_dir / fname) })
         return examples
 
 
 class AvidSuperResTrain(AvidSuperRes):
 
     def __init__(self, **kwargs):
-        kwargs.update({ 'names': ['Debug'] })
+        kwargs.update({ 'names': ['Limit1', 'Limit2', 'Limit5', 'Limit20', 'Limit100', 'Random'] })
         super().__init__(**kwargs)
 
 
 class AvidSuperResValidation(AvidSuperRes):
 
-    def __init__(self, **kwargs):
-        kwargs.update({ 'names': ['Debug'] })
+    def __init__(self, num_items:int=1024, **kwargs):
+        kwargs.update({ 'names': ['Random'] })
         super().__init__(**kwargs)
+        self.base = self.base[:num_items]
+
+
+def gen_file_list():
+    avid_root_dir = Path(os.environ['AVID_ROOT_DIR'])
+    for sub_dir in avid_root_dir.glob('*'):
+        if not sub_dir.is_dir():
+            continue
+        print(f'process {sub_dir.name}')
+        flist = []
+        for path in tqdm(list(sub_dir.glob('*.jpg'))):
+            flist.append(path.name)
+        with open(sub_dir / 'flist.pkl', 'wb') as f:
+            pickle.dump(flist, f)
+
+
+def main():
+    gen_file_list()
+
+
+if __name__ == '__main__':
+    fire.Fire(main)
