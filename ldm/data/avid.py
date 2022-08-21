@@ -89,23 +89,23 @@ class AvidSuperRes(Dataset):
 
     def __getitem__(self, i:int):
         example = self.base[i]
-        image = Image.open(example['path'])
-        if not image.mode == 'RGB':
-            image = image.convert('RGB')
-        image = np.array(image).astype(np.uint8)
-        min_side_len = min(image.shape[:2])
+        with Image.open(example['path']) as image:
+            if not image.mode == 'RGB':
+                image = image.convert('RGB')
+            img = np.array(image).astype(np.uint8)
+        min_side_len = min(img.shape[:2])
         crop_side_len = min_side_len * np.random.uniform(self.min_crop_f, self.max_crop_f, size=None)
         crop_side_len = int(crop_side_len)
         self.cropper = al.RandomCrop(height=crop_side_len, width=crop_side_len)
-        image = self.cropper(image=image)['image']
-        image = self.img_rescler(image=image)['image']
+        img = self.cropper(image=img)['image']
+        img = self.img_rescler(image=img)['image']
         if self.pil_interpolation:
-            image_pil = Image.fromarray(image)
+            image_pil = Image.fromarray(img)
             lr_image = self.degradation_process(image_pil)
             lr_image = np.array(lr_image).astype(np.uint8)
         else:
-            lr_image = self.degradation_process(image=image)['image']
-        example['image'] = (image/127.5-1.0).astype(np.float32)
+            lr_image = self.degradation_process(image=img)['image']
+        example['image'] = (img/127.5-1.0).astype(np.float32)
         example['lr_image'] = (lr_image/127.5-1.0).astype(np.float32)
         return example
 
@@ -130,7 +130,7 @@ class AvidSuperRes(Dataset):
 class AvidSuperResTrain(AvidSuperRes):
 
     def __init__(self, **kwargs):
-        kwargs.update({ 'names': ['Limit1', 'Limit2', 'Limit5', 'Limit20', 'Limit100', 'Random'] })
+        kwargs.update({ 'names': ['Limit1'] })
         super().__init__(**kwargs)
 
 

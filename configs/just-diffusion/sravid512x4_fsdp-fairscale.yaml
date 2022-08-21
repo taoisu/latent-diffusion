@@ -33,7 +33,7 @@ model:
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 6
+    batch_size: 5
     wrap: false
     num_workers: 16
     train:
@@ -57,9 +57,9 @@ lightning:
     image_logger:
       target: main.ImageLogger
       params:
-        batch_frequency: 2000
+        batch_frequency: 1000
         increase_log_steps: false
-        max_images: 8
+        max_images: 4
         clamp: true
         log_images_kwargs:
           plot_diffusion_rows: true
@@ -67,7 +67,7 @@ lightning:
           inpaint: false
   modelcheckpoint:
     params:
-      every_n_train_steps: 2000
+      every_n_train_steps: 1000
   trainer:
     benchmark: True
     max_epochs: -1
