@@ -1,5 +1,7 @@
 import cv2
+import fire
 import os
+import pickle
 import PIL
 
 import albumentations as al
@@ -9,6 +11,7 @@ import torchvision.transforms.functional as ttf
 from functools import partial
 from pathlib import Path
 from torch.utils.data import Dataset
+from tqdm import tqdm
 from typing import List
 
 from PIL import Image
@@ -86,23 +89,23 @@ class AvidSuperRes(Dataset):
 
     def __getitem__(self, i:int):
         example = self.base[i]
-        image = Image.open(example['path'])
-        if not image.mode == 'RGB':
-            image = image.convert('RGB')
-        image = np.array(image).astype(np.uint8)
-        min_side_len = min(image.shape[:2])
+        with Image.open(example['path']) as image:
+            if not image.mode == 'RGB':
+                image = image.convert('RGB')
+            img = np.array(image).astype(np.uint8)
+        min_side_len = min(img.shape[:2])
         crop_side_len = min_side_len * np.random.uniform(self.min_crop_f, self.max_crop_f, size=None)
         crop_side_len = int(crop_side_len)
         self.cropper = al.RandomCrop(height=crop_side_len, width=crop_side_len)
-        image = self.cropper(image=image)['image']
-        image = self.img_rescler(image=image)['image']
+        img = self.cropper(image=img)['image']
+        img = self.img_rescler(image=img)['image']
         if self.pil_interpolation:
-            image_pil = Image.fromarray(image)
+            image_pil = Image.fromarray(img)
             lr_image = self.degradation_process(image_pil)
             lr_image = np.array(lr_image).astype(np.uint8)
         else:
-            lr_image = self.degradation_process(image=image)['image']
-        example['image'] = (image/127.5-1.0).astype(np.float32)
+            lr_image = self.degradation_process(image=img)['image']
+        example['image'] = (img/127.5-1.0).astype(np.float32)
         example['lr_image'] = (lr_image/127.5-1.0).astype(np.float32)
         return example
 
@@ -114,20 +117,47 @@ class AvidSuperRes(Dataset):
         examples = []
         for folder_name in names:
             img_dir = root_dir / folder_name
-            for path in Path(img_dir).glob('*.jpg'):
-                examples.append({ 'path': str(path) })
+            flist_path = img_dir / 'flist.pkl'
+            if not flist_path.exists():
+                continue
+            with open(flist_path, 'rb') as f:
+                flist = pickle.load(f)
+            for fname in flist:
+                examples.append({ 'path': str(img_dir / fname) })
         return examples
 
 
 class AvidSuperResTrain(AvidSuperRes):
 
     def __init__(self, **kwargs):
-        kwargs.update({ 'names': ['Debug'] })
+        kwargs.update({ 'names': ['Limit1'] })
         super().__init__(**kwargs)
 
 
 class AvidSuperResValidation(AvidSuperRes):
 
-    def __init__(self, **kwargs):
-        kwargs.update({ 'names': ['Debug'] })
+    def __init__(self, num_items:int=1024, **kwargs):
+        kwargs.update({ 'names': ['Random'] })
         super().__init__(**kwargs)
+        self.base = self.base[:num_items]
+
+
+def gen_file_list():
+    avid_root_dir = Path(os.environ['AVID_ROOT_DIR'])
+    for sub_dir in avid_root_dir.glob('*'):
+        if not sub_dir.is_dir():
+            continue
+        print(f'process {sub_dir.name}')
+        flist = []
+        for path in tqdm(list(sub_dir.glob('*.jpg'))):
+            flist.append(path.name)
+        with open(sub_dir / 'flist.pkl', 'wb') as f:
+            pickle.dump(flist, f)
+
+
+def main():
+    gen_file_list()
+
+
+if __name__ == '__main__':
+    fire.Fire(main)
