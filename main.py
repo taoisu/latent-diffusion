@@ -313,8 +313,8 @@ class SetupCallback(Callback):
     def on_exception(self, trainer:Trainer, pl_module:Lit, exception:BaseException):
         if trainer.global_rank == 0:
             print("Summoning checkpoint.")
-            ckpt_path = os.path.join(self.ckptdir, "last.ckpt")
-            trainer.save_checkpoint(ckpt_path)
+        ckpt_path = os.path.join(self.ckptdir, "last.ckpt")
+        trainer.save_checkpoint(ckpt_path)
 
     def on_fit_start(self, trainer:Trainer, pl_module:Lit):
         if trainer.global_rank == 0:
@@ -819,8 +819,8 @@ if __name__ == "__main__":
             # run all checkpoint hooks
             if trainer.global_rank == 0:
                 print("Summoning checkpoint.")
-                ckpt_path = os.path.join(ckptdir, "last.ckpt")
-                trainer.save_checkpoint(ckpt_path)
+            ckpt_path = os.path.join(ckptdir, "last.ckpt")
+            trainer.save_checkpoint(ckpt_path)
 
 
         def divein(*args, **kwargs):
