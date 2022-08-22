@@ -28,7 +28,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 )
 from torchvision.utils import make_grid
 from torchvision.transforms import Normalize, Compose
-from typing import Any, Callable, Dict, List, Tuple, Union
+from typing import Any, Callable, Dict, List, Tuple, Union, Mapping
 from pytorch_lightning.utilities.distributed import rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy, DDPFullyShardedStrategy
 from ldm.modules.attention import BasicTransformerBlock, SpatialTransformer
@@ -240,6 +240,11 @@ class DDPM(pl.LightningModule):
             print(f"Missing Keys: {missing}")
         if len(unexpected) > 0:
             print(f"Unexpected Keys: {unexpected}")
+
+    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
+        if isinstance(self.cond_stage_model, (FrozenPretrainedTextEmbedder,)):
+            strict = False
+        return super().load_state_dict(state_dict=state_dict, strict=strict)
 
     def q_mean_variance(self, x_start, t):
         """

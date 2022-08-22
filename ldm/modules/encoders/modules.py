@@ -236,6 +236,7 @@ class FrozenPretrainedTextEmbedder(AbstractEncoder):
     def __init__(
         self,
         model_name:str,
+        max_len:int=128,
     ):
         super().__init__()
         if model_name.startswith('google/t5'):
@@ -245,6 +246,7 @@ class FrozenPretrainedTextEmbedder(AbstractEncoder):
             self.ckpt_cls = (T5Block,)
         else:
             raise ValueError()
+        self.max_len = max_len
 
     def fsdp_wrap_policy(
         self,
@@ -259,10 +261,12 @@ class FrozenPretrainedTextEmbedder(AbstractEncoder):
 
     def encode(self, text:List[str]):
         batch_size = len(text)
+        max_len = self.max_len
         inputs = self.tokenizer(
             text,
             padding='longest',
             return_tensors='pt',
+            max_length=max_len,
             truncation=True)
         device = self.root_device if hasattr(self, 'root_device') else self.model.device
         for k in inputs.keys():
