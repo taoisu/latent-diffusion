@@ -313,6 +313,7 @@ class SetupCallback(Callback):
     def on_exception(self, trainer:Trainer, pl_module:Lit, exception:BaseException):
         if trainer.global_rank == 0:
             print("Summoning checkpoint.")
+        print(exception)
         ckpt_path = os.path.join(self.ckptdir, "last.ckpt")
         trainer.save_checkpoint(ckpt_path)
 
@@ -477,7 +478,9 @@ class ImageLogger(Callback):
         batch_idx:int,
     ):
         if not self.disabled and (pl_module.global_step > 0 or self.log_first_step):
+            torch.distributed.barrier()
             self.log_img(pl_module, batch, batch_idx, split="train")
+            torch.distributed.barrier()
 
     def on_validation_batch_end(
         self,
@@ -838,8 +841,8 @@ if __name__ == "__main__":
         if opt.train:
             try:
                 trainer.fit(model, data)
-            except Exception:
-                melk()
+            except Exception as e:
+                print(e)
                 raise
         if not opt.no_test and not trainer.interrupted:
             trainer.test(model, data)
