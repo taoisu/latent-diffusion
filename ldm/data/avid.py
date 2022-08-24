@@ -105,9 +105,10 @@ class AvidSuperRes(Dataset):
             lr_image = np.array(lr_image).astype(np.uint8)
         else:
             lr_image = self.degradation_process(image=img)['image']
-        example['image'] = (img/127.5-1.0).astype(np.float32)
-        example['lr_image'] = (lr_image/127.5-1.0).astype(np.float32)
-        return example
+        return {
+            'image': (img/127.5-1.0).astype(np.float32),
+            'lr_image': (lr_image/127.5-1.0).astype(np.float32)
+        }
 
     def get_base(self, names: List[str]):
         '''
