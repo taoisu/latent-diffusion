@@ -12,7 +12,7 @@ from io import BytesIO
 from itertools import repeat
 from multiprocessing import Pool
 from pathlib import Path
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from tqdm import tqdm
 from typing import Dict, Tuple
 
@@ -50,43 +50,24 @@ class LaionTextToImage(Dataset):
         self.dropout = dropout
         os.makedirs(self.cache_dir, exist_ok=True)
 
-    def cache_item(self, idx:int, item:Dict):
-        '''
-        try download and cache the image for the item, and return whether the op is successful
-        '''
-        url = item['URL']
-        img_path = self.cache_dir / f'{idx}.jpg'
-        if img_path.exists():
-            return True
-        else:
-            headers = { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36' }
-            try:
-                res = requests.get(url, headers=headers, timeout=2)
-                image = Image.open(BytesIO(res.content))
-                image = image.convert(mode='RGB')
-            except Exception:
-                return False
-            image.save(img_path)
-        return True
-
     def train_item(self, idx:int, item:Dict):
         img_name = f'{idx}.jpg'
         img_path = self.cache_dir / img_name
         assert img_path.exists()
-        image = Image.open(img_path)
+        with Image.open(img_path) as image:
+            image = image.convert('RGB')
+            img = np.array(image).astype(np.uint8)
         text = item['TEXT'] or ''
-        image = image.convert('RGB')
-        image = np.array(image).astype(np.uint8)
-        min_side_len = min(image.shape[:2])
+        min_side_len = min(img.shape[:2])
         self.cropper = al.RandomCrop(height=min_side_len, width=min_side_len)
-        image = self.cropper(image=image)['image']
-        image = self.img_rescaler(image=image)['image']
-        image = (image/127.5-1.0).astype(np.float32)
+        img = self.cropper(image=img)['image']
+        img = self.img_rescaler(image=img)['image']
+        img = (img/127.5-1.0).astype(np.float32)
         if self.dropout > 0 and np.random.random() < self.dropout:
             text = ''
         return {
             'caption': text,
-            'image': image,
+            'image': img,
         }
 
     def load_items(self, name:str):
@@ -94,6 +75,7 @@ class LaionTextToImage(Dataset):
             'laion/laion2B-en-aesthetic',
         ]
         ds = load_dataset(name, split='train')
+        ds = ds.remove_columns([col for col in ds.column_names if col != 'TEXT'])
         return ds
 
     def __getitem__(self, i:int):
@@ -139,9 +121,9 @@ def try_download(obj:Tuple):
         headers = { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36' }
         try:
             res = requests.get(url, headers=headers, timeout=2)
-            image = Image.open(BytesIO(res.content))
-            image = image.convert(mode='RGB')
-            image.save(img_path)
+            with Image.open(BytesIO(res.content)) as image:
+                image = image.convert(mode='RGB')
+                image.save(img_path)
         except Exception:
             return
 
