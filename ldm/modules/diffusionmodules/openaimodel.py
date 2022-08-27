@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from abc import abstractmethod
+from einops import rearrange
 from torch import Tensor
 from typing import List, Tuple, Union
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
@@ -123,12 +124,17 @@ class Upsample(nn.Module):
 
     def forward(self, x:Tensor):
         assert x.shape[1] == self.channels
+        dtype = x.dtype
+        if dtype == th.bfloat16:
+            x = x.to(th.float32)
         if self.dims == 3:
             x = F.interpolate(
                 x, (x.shape[2], x.shape[3] * 2, x.shape[4] * 2), mode="nearest"
             )
         else:
             x = F.interpolate(x, scale_factor=2, mode="nearest")
+        if dtype == th.bfloat16:
+            x = x.to(dtype)
         if self.use_conv:
             x = self.conv(x)
         return x
@@ -485,6 +491,7 @@ class UNetModel(nn.Module):
         out_channels:int,
         num_res_blocks:int,
         attention_resolutions:List[int],
+        patch_size:int=1,
         dropout:float=0,
         channel_mult:Tuple=(1,2,4,8),
         conv_resample:bool=True,
@@ -524,7 +531,11 @@ class UNetModel(nn.Module):
         if num_head_channels == -1:
             assert num_heads != -1, 'Either num_heads or num_head_channels has to be set'
 
+        in_channels = in_channels * patch_size * patch_size
+        out_channels = out_channels * patch_size * patch_size
+
         self.image_size = image_size
+        self.patch_size = patch_size
         self.in_channels = in_channels
         self.model_channels = model_channels
         self.out_channels = out_channels
@@ -780,6 +791,20 @@ class UNetModel(nn.Module):
         self.middle_block.apply(convert_module_to_f32)
         self.output_blocks.apply(convert_module_to_f32)
 
+    def from_patches(self, x:Tensor):
+        p = self.patch_size
+        x = rearrange(x, 'b (c1 c) h w -> b w (c1 h) c', c1=p)
+        x = rearrange(x, 'b w h (c2 c) -> b h (c2 w) c', c2=p)
+        x = rearrange(x, 'b h w c -> b c h w')
+        return x
+
+    def to_patches(self, x:Tensor):
+        p = self.patch_size
+        x = rearrange(x, 'b c h (w1 w) -> b h w (w1 c)', w1=p)
+        x = rearrange(x, 'b (h1 h) w c -> b w h (h1 c)', h1=p)
+        x = rearrange(x, 'b w h c -> b c h w')
+        return x
+
     def forward(
         self,
         x:Tensor,
@@ -819,6 +844,8 @@ class UNetModel(nn.Module):
             crossattn_context = th.cat(crossattn_context, dim=1)
             context = crossattn_context
 
+        if self.patch_size > 1:
+            x = self.to_patches(x)
         h = x.type(self.dtype)
         for module in self.input_blocks:
             h = module(h, emb, context)
@@ -829,9 +856,12 @@ class UNetModel(nn.Module):
             h = module(h, emb, context)
         h = h.type(x.dtype)
         if self.predict_codebook_ids:
-            return self.id_predictor(h)
+            h = self.id_predictor(h)
         else:
-            return self.out(h)
+            h = self.out(h)
+        if self.patch_size > 1:
+            h = self.from_patches(h)
+        return h
 
 
 class EncoderUNetModel(nn.Module):
