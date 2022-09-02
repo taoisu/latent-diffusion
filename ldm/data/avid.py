@@ -98,7 +98,11 @@ class AvidSuperRes(Dataset):
         crop_side_len = int(crop_side_len)
         self.cropper = al.RandomCrop(height=crop_side_len, width=crop_side_len)
         img = self.cropper(image=img)['image']
-        img = self.img_rescler(image=img)['image']
+        try:
+            img = self.img_rescler(image=img)['image']
+        except Exception as e:
+            print(e)
+            img = np.ones((self.size, self.size, 3), dtype=np.uint8)*255
         if self.pil_interpolation:
             image_pil = Image.fromarray(img)
             lr_image = self.degradation_process(image_pil)
