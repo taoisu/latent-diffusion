@@ -156,8 +156,25 @@ def gen_file_list():
             pickle.dump(flist, f)
 
 
-def main():
-    gen_file_list()
+def filter_file_list():
+    avid_root_dir = Path(os.environ['AVID_ROOT_DIR'])
+    for sub_dir in avid_root_dir.glob('*'):
+        if not sub_dir.is_dir():
+            continue
+        print(f'process {sub_dir.name}')
+        for path in tqdm(list(sub_dir.glob('*.jpg'))):
+            with Image.open(path) as image:
+                h, w = image.size
+                if h * 4 < w or w * 4 < h:
+                    print(f'Delete {path.name} with shape {h} x {w}')
+                    os.remove(str(path))
+
+
+def main(mode:str):
+    if mode == 'gen':
+        gen_file_list()
+    elif mode == 'filter':
+        filter_file_list()
 
 
 if __name__ == '__main__':
