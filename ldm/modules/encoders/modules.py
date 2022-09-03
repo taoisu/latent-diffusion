@@ -274,7 +274,6 @@ class FrozenPretrainedTextEmbedder(AbstractEncoder):
         outputs = self(**inputs)
         last_hidden_state = outputs.last_hidden_state
         eos_hidden_state_pos = inputs['attention_mask'].sum(dim=1) - 1
-        eos_hidden_state_pos = torch.clamp_min(eos_hidden_state_pos, 0)
         eos_hidden_state = last_hidden_state[
             torch.arange(0, batch_size, device=device),
             eos_hidden_state_pos,

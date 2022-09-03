@@ -567,10 +567,20 @@ class UNetModel(nn.Module):
                 pooled_dim = val['pooled_dim']
                 self.register_module(
                     f'{key}_crossattn_proj',
-                    linear(seq_dim, context_dim, bias=False) if seq_dim != context_dim else nn.Identity())
+                    nn.Sequential(
+                        linear(seq_dim, context_dim),
+                        nn.SiLU(),
+                        linear(context_dim, context_dim),
+                        nn.LayerNorm(context_dim),
+                    ))
                 self.register_module(
                     f'{key}_emb_proj',
-                    linear(pooled_dim, time_embed_dim, bias=False) if pooled_dim != time_embed_dim else nn.Identity())
+                    nn.Sequential(
+                        linear(pooled_dim, time_embed_dim),
+                        nn.SiLU(),
+                        linear(time_embed_dim, time_embed_dim),
+                        nn.LayerNorm(time_embed_dim),
+                    ))
 
         if self.num_classes is not None:
             self.label_emb = nn.Embedding(num_classes, time_embed_dim)
