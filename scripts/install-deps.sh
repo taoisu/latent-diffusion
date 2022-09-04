@@ -8,7 +8,8 @@ python3 -m pip install                              \
     sentencepiece datasets pytorch-lightning        \
     fairscale einops transformers kornia numpy      \
     albumentations opencv-python pudb imageio       \
-    imageio-ffmpeg omegaconf test-tube streamlit fire
+    imageio-ffmpeg omegaconf test-tube streamlit    \
+    fire accelerate
 
 python3 -m pip install --pre torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/nightly/cu113 --force
 
