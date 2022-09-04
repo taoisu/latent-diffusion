@@ -10,8 +10,10 @@
             "request": "launch",
             "program": "ldm/data/laion.py",
             "args": [
-                "--name", "laion/laion2B-en-aesthetic",
-                "--mode", "download"
+                "--name",
+                "laion/laion2B-en-aesthetic",
+                "--mode",
+                "download"
             ],
             "console": "integratedTerminal",
             "env": {
@@ -39,10 +41,17 @@
             "justMyCode": true
         },
         {
-            "name": "Python: Current File",
+            "name": "ldm/data/avid.py",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "ldm/data/avid.py",
+            "args": [
+                "--mode",
+                "test_inpaint"
+            ],
+            "env": {
+                "AVID_ROOT_DIR": "/mount/airocrhbi/ocr-data/Vertical/vdipainter/data/avidxchange"
+            },
             "console": "integratedTerminal",
             "justMyCode": true
         },
