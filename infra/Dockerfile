@@ -17,6 +17,11 @@ RUN set -xe; \
     echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc && \
     echo "conda activate base" >> ~/.bashrc
 
+# Upugrade
+RUN set -xe; \
+    apt-get update -y; \
+    apt-get upgrade -y;
+
 # Repo Environment
 COPY [".", "/latent-diffusion"]
 
