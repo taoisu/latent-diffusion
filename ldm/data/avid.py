@@ -156,6 +156,23 @@ class AvidInpaint(Dataset):
         return examples
 
 
+class AvidInpaintTrain(AvidInpaint):
+
+    def __init__(self, **kwargs):
+        if 'names' not in kwargs:
+            kwargs.update({ 'names': ['Limit1'] })
+        super().__init__(**kwargs)
+
+
+class AvidInpaintValidation(AvidInpaint):
+
+    def __init__(self, num_items:int=1024, **kwargs):
+        if 'names' not in kwargs:
+            kwargs.update({ 'names': ['Random'] })
+        super().__init__(**kwargs)
+        self.base = self.base[:num_items]
+
+
 class AvidSuperRes(Dataset):
 
     def __init__(
@@ -269,14 +286,16 @@ class AvidSuperRes(Dataset):
 class AvidSuperResTrain(AvidSuperRes):
 
     def __init__(self, **kwargs):
-        kwargs.update({ 'names': ['Limit1'] })
+        if 'names' not in kwargs:
+            kwargs.update({ 'names': ['Limit1'] })
         super().__init__(**kwargs)
 
 
 class AvidSuperResValidation(AvidSuperRes):
 
     def __init__(self, num_items:int=1024, **kwargs):
-        kwargs.update({ 'names': ['Random'] })
+        if 'names' not in kwargs:
+            kwargs.update({ 'names': ['Random'] })
         super().__init__(**kwargs)
         self.base = self.base[:num_items]
 
