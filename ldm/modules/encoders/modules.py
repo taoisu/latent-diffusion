@@ -288,6 +288,30 @@ class FrozenPretrainedTextEmbedder(AbstractEncoder):
         return {}
 
 
+class FrozenTextInpaintEmbedder(FrozenPretrainedTextEmbedder):
+    '''
+    Embed text with pretrained transformer, and 
+    '''
+    def __init__(
+        self,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+
+    def encode(self, cond:Dict):
+        ret = super().encode(cond['text'])
+        mask, image = cond['mask'], cond['image']
+        cond_image = image.clone()
+        cond_image[mask.broadcast_to(cond_image.shape)] = -1
+        cond_image = rearrange(cond_image, 'b h w c -> b c h w')
+        mask = rearrange(mask, 'b h w c -> b c h w')
+        ret.update({
+            'c_mask': mask,
+            'c_concat': cond_image,
+        })
+        return ret
+
+
 class FrozenCLIPTextEmbedder(nn.Module):
     """
     Uses the CLIP transformer encoder for text.

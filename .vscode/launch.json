@@ -78,6 +78,27 @@
             "justMyCode": false
         },
         {
+            "name": "main.py - train inpaint avid",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "args": [
+                "--base",
+                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-t5xxl.yaml",
+                "--accelerator",
+                "gpu",
+                "--devices",
+                "0,",
+                "-t",
+            ],
+            "env": {
+                "AVID_ROOT_DIR": "/mount/airocrhbi/ocr-data/Vertical/vdipainter/data/avidxchange",
+                "CUDA_LAUNCH_BLOCKING": "1",
+                "TOKENIZERS_PARALLELISM": "false"
+            },
+            "justMyCode": false
+        },
+        {
             "name": "main.py - train sr avid",
             "type": "python",
             "request": "launch",

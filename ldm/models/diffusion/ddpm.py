@@ -33,7 +33,7 @@ from pytorch_lightning.utilities.distributed import rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy, DDPFullyShardedStrategy
 from ldm.modules.attention import BasicTransformerBlock, SpatialTransformer
 from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, TimestepEmbedSequential
-from ldm.modules.encoders.modules import FrozenPretrainedTextEmbedder
+from ldm.modules.encoders.modules import FrozenPretrainedTextEmbedder, FrozenTextInpaintEmbedder
 
 from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
 from ldm.modules.ema import LitEma, LitEmaGnrl
@@ -683,7 +683,7 @@ class LatentDiffusion(DDPM):
             raise NotImplementedError(f"encoder_posterior of type '{type(encoder_posterior)}' not yet implemented")
         return self.scale_factor * z
 
-    def get_learned_conditioning(self, c:Tensor):
+    def get_learned_conditioning(self, c:Union[Tensor,List[str]]):
         if self.cond_stage_forward is None:
             if hasattr(self.cond_stage_model, 'encode') and callable(self.cond_stage_model.encode):
                 c = self.cond_stage_model.encode(c)
@@ -823,9 +823,7 @@ class LatentDiffusion(DDPM):
             if cond_key != self.first_stage_key:
                 if cond_key in ['caption', 'coordinates_bbox']:
                     xc = batch[cond_key]
-                elif cond_key == 'class_label':
-                    xc = batch
-                elif cond_key == 'patch':
+                elif cond_key in ['class_label', 'patch', 'text']:
                     xc = batch
                 elif cond_key == 'lr_image':
                     xc = super().get_input(batch, cond_key).to(self.device)
@@ -1185,7 +1183,9 @@ class LatentDiffusion(DDPM):
         return mean_flat(kl_prior) / np.log(2.0)
 
     def get_loss_mask(self, x_start:Tensor, cond:Union[Tensor,Dict]):
-        if self.cond_stage_key == 'patch':
+        if isinstance(cond, Dict) and 'c_mask' in cond:
+            return cond['c_mask']
+        elif self.cond_stage_key == 'patch':
             mask = cond['c_concat'][:,-1:,:,:]
             mask = (mask + 1) / 2.
             return mask
@@ -1533,8 +1533,8 @@ class LatentDiffusion(DDPM):
             if hasattr(self.cond_stage_model, "decode"):
                 xc = self.cond_stage_model.decode(c)
                 log["conditioning"] = xc
-            elif self.cond_stage_key in ["caption"]:
-                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["caption"])
+            elif self.cond_stage_key in ["caption", "text"]:
+                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch[self.cond_stage_key])
                 log["conditioning"] = xc
             elif self.cond_stage_key == 'class_label':
                 xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["human_label"])
@@ -1547,6 +1547,9 @@ class LatentDiffusion(DDPM):
                 log["conditioning"] = xc
             if ismap(xc):
                 log["original_conditioning"] = self.to_rgb(xc)
+
+        if isinstance(self.cond_stage_model, FrozenTextInpaintEmbedder):
+            log['concat'] = c['c_concat']
 
         if plot_diffusion_rows:
             # get diffusion row
@@ -1832,6 +1835,7 @@ class DiffusionWrapper(pl.LightningModule):
         c_crossattn:List[Tensor]=None,
         c_emb: List[Tensor]=None,
         c_name: List[str]=None,
+        c_mask: List[Tensor]=None,
     ):
         if self.conditioning_key is None:
             out = self.diffusion_model(x, t)
