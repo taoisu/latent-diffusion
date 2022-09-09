@@ -63,7 +63,7 @@ class AvidInpaint(Dataset):
         if len(words) == 0:
             ret = {
                 'image': np.ones((self.size, self.size, 3), dtype=np.uint8)*255,
-                'mask': np.zeros((self.size, self.size, 1), dtype=bool),
+                'mask': np.zeros((self.size, self.size, 1), dtype=np.float32),
                 'text': '',
             }
         else:
@@ -93,7 +93,7 @@ class AvidInpaint(Dataset):
             mask = np.zeros((crop_size, crop_size, 1), dtype=np.uint8)
             mask[t:t+ymax-ymin, l:l+xmax-xmin] = 255
             out = self.img_rescler(image=crop, mask=mask)
-            crop, mask = out['image'], out['mask'] != 0
+            crop, mask = out['image'], (out['mask'] != 0).astype(np.float32)
             ret = {
                 'image': crop,
                 'mask': mask,
@@ -162,7 +162,6 @@ class AvidInpaintTrain(AvidInpaint):
         if 'names' not in kwargs:
             kwargs.update({ 'names': ['Limit1'] })
         super().__init__(**kwargs)
-
 
 class AvidInpaintValidation(AvidInpaint):
 

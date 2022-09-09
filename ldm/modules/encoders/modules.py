@@ -280,6 +280,7 @@ class FrozenPretrainedTextEmbedder(AbstractEncoder):
         ]
         return {
             'c_crossattn': last_hidden_state,
+            'c_crossattn_mask': inputs['attention_mask'],
             'c_emb': eos_hidden_state,
             'c_name': 'caption',
         }
@@ -294,21 +295,21 @@ class FrozenTextInpaintEmbedder(FrozenPretrainedTextEmbedder):
     '''
     def __init__(
         self,
+        concat:bool=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
+        self.concat = concat
 
     def encode(self, cond:Dict):
         ret = super().encode(cond['text'])
         mask, image = cond['mask'], cond['image']
-        cond_image = image.clone()
-        cond_image[mask.broadcast_to(cond_image.shape)] = -1
-        cond_image = rearrange(cond_image, 'b h w c -> b c h w')
-        mask = rearrange(mask, 'b h w c -> b c h w')
-        ret.update({
-            'c_mask': mask,
-            'c_concat': cond_image,
-        })
+        if self.concat:
+            cond_image = image.clone()
+            cond_image[mask.broadcast_to(cond_image.shape) == 1] = -1
+            cond_image = rearrange(cond_image, 'b h w c -> b c h w')
+            ret.update({ 'c_concat': cond_image })
+        ret.update({ 'c_mask': rearrange(mask, 'b h w c -> b c h w') })
         return ret
 
 

@@ -39,6 +39,7 @@ def main(
         'prep_avid_flt': 'cloud/entry_avid_filter.sh',
         'prep_avid_gen_ocr': 'cloud/entry_avid_gen_ocr.sh',
         'train_avid_sr_128x512': 'cloud/entry_avid_train_sr_128x512.sh',
+        'train_avid_inpaint_128': 'cloud/entry_avid_train_inpaint_128.sh'
     }
     script = scripts[task]
     config = ScriptRunConfig(

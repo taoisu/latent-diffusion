@@ -32,18 +32,18 @@ model:
         context_dim: 512
         contexts:
           caption:
-            seq_dim: 4096
-            pooled_dim: 4096
+            seq_dim: 2048
+            pooled_dim: 2048
     first_stage_config:
       target: ldm.models.autoencoder.IdentityFirstStage
     cond_stage_config:
       target: ldm.modules.encoders.modules.FrozenTextInpaintEmbedder
       params:
-        model_name: google/t5-v1_1-xxl
+        model_name: google/t5-v1_1-xl
 data:
   target: main.DataModuleFromConfig
   params:
-    batch_size: 32
+    batch_size: 24
     wrap: false
     num_workers: 32
     train:

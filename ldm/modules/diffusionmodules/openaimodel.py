@@ -83,7 +83,7 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
     support it as an extra input.
     """
 
-    def forward(self, x:Tensor, emb:Tensor, context:Tensor=None):
+    def forward(self, x:Tensor, emb:Tensor, context:Tensor=None, context_mask:Tensor=None):
         for layer in self:
             true_layer = layer
             if isinstance(true_layer, CheckpointWrapper):
@@ -91,7 +91,7 @@ class TimestepEmbedSequential(nn.Sequential, TimestepBlock):
             if isinstance(true_layer, TimestepBlock):
                 x = layer(x, emb)
             elif isinstance(true_layer, SpatialTransformer):
-                x = layer(x, context)
+                x = layer(x, context, context_mask)
             else:
                 x = layer(x)
         return x
@@ -568,18 +568,18 @@ class UNetModel(nn.Module):
                 self.register_module(
                     f'{key}_crossattn_proj',
                     nn.Sequential(
+                        nn.LayerNorm(seq_dim),
                         linear(seq_dim, context_dim),
                         nn.SiLU(),
                         linear(context_dim, context_dim),
-                        nn.LayerNorm(context_dim),
                     ))
                 self.register_module(
                     f'{key}_emb_proj',
                     nn.Sequential(
+                        nn.LayerNorm(pooled_dim),
                         linear(pooled_dim, time_embed_dim),
                         nn.SiLU(),
                         linear(time_embed_dim, time_embed_dim),
-                        nn.LayerNorm(time_embed_dim),
                     ))
 
         if self.num_classes is not None:
@@ -842,6 +842,7 @@ class UNetModel(nn.Module):
             assert y.shape == (x.shape[0],)
             emb = emb + self.label_emb(y)
 
+        context_mask = None
         if isinstance(context, Dict):
             crossattn_context = []
             for key, val in context.items():
@@ -851,6 +852,8 @@ class UNetModel(nn.Module):
                 if 'crossattn' in val:
                     proj_module = getattr(self, f'{key}_crossattn_proj')
                     crossattn_context.append(proj_module(val['crossattn']))
+                if 'crossattn_mask' in val:
+                    context_mask = val['crossattn_mask'] == 1
             crossattn_context = th.cat(crossattn_context, dim=1)
             context = crossattn_context
 
@@ -858,12 +861,12 @@ class UNetModel(nn.Module):
             x = self.to_patches(x)
         h = x.type(self.dtype)
         for module in self.input_blocks:
-            h = module(h, emb, context)
+            h = module(h, emb, context, context_mask)
             hs.append(h)
-        h = self.middle_block(h, emb, context)
+        h = self.middle_block(h, emb, context, context_mask)
         for module in self.output_blocks:
             h = th.cat([h, hs.pop()], dim=1)
-            h = module(h, emb, context)
+            h = module(h, emb, context, context_mask)
         h = h.type(x.dtype)
         if self.predict_codebook_ids:
             h = self.id_predictor(h)
