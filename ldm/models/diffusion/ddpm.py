@@ -1549,7 +1549,23 @@ class LatentDiffusion(DDPM):
                 log["original_conditioning"] = self.to_rgb(xc)
 
         if isinstance(self.cond_stage_model, FrozenTextInpaintEmbedder):
-            log['concat'] = c['c_concat']
+            if 'c_concat' in c:
+                log['concat'] = c['c_concat']
+            mask = 1 - rearrange(batch['mask'][:N], 'b h w c -> b c h w')
+            log["mask"] = mask.clone()*2-1
+            # inpaint w/ mask
+            with self.ema_scope("Poltting Text Inpaint"):
+                samples, _ = self.sample_log(
+                    cond=c,
+                    batch_size=N,
+                    ddim=use_ddim,
+                    eta=ddim_eta,
+                    ddim_steps=ddim_steps,
+                    x0=z[:N],
+                    mask=mask)
+            x_samples = self.decode_first_stage(samples.to(self.device))
+            log["samples_text_inpaint"] = x_samples
+
 
         if plot_diffusion_rows:
             # get diffusion row
@@ -1833,6 +1849,7 @@ class DiffusionWrapper(pl.LightningModule):
         t:Tensor,
         c_concat:List[Tensor]=None,
         c_crossattn:List[Tensor]=None,
+        c_crossattn_mask:List[Tensor]=None,
         c_emb: List[Tensor]=None,
         c_name: List[str]=None,
         c_mask: List[Tensor]=None,
@@ -1854,11 +1871,13 @@ class DiffusionWrapper(pl.LightningModule):
                 xc = torch.cat([x] + c_concat, dim=1)
             else:
                 xc = x
+            c_crossattn_mask = [None]*len(c_name) if c_crossattn_mask is None else c_crossattn_mask
             context = {
                 c_name: {
                     'emb': c_eb,
                     'crossattn': c_ca,
-                } for c_name, c_ca, c_eb in zip(c_name, c_crossattn, c_emb)
+                    'crossattn_mask': c_cam,
+                } for c_name, c_ca, c_cam, c_eb in zip(c_name, c_crossattn, c_crossattn_mask, c_emb)
             }
             out = self.diffusion_model(xc, t, context=context)
         elif self.conditioning_key == 'adm':

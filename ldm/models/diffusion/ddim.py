@@ -231,6 +231,9 @@ class DDIMSampler(object):
                 intermediates['x_inter'].append(img)
                 intermediates['pred_x0'].append(pred_x0)
 
+        if mask is not None:
+            img = x0 * mask + (1. - mask) * img
+
         return img, intermediates
 
     @torch.no_grad()
