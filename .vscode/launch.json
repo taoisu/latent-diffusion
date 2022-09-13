@@ -84,7 +84,7 @@
             "program": "main.py",
             "args": [
                 "--base",
-                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-t5xl.yaml",
+                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-t5xl-dbg.yaml",
                 "--accelerator",
                 "gpu",
                 "--devices",

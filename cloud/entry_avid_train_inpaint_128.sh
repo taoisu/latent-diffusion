@@ -13,9 +13,10 @@ export AVID_ROOT_DIR="${AZUREML_DATAREFERENCE_ocrd}/Vertical/vdipainter/data/avi
 ls "$AVID_ROOT_DIR";
 
 export LOG_DIR="${AZUREML_DATAREFERENCE_ocrd}/Vertical/vdipainter/logs/inpaintavid128"
+export TOKENIZERS_PARALLELISM="false"
 
 python3 main.py                                                                 \
-    --base configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-t5xxl.yaml   \
+    --base configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-t5xl.yaml    \
     --accelerator gpu                                                           \
     --devices 0,1,2,3,4,5,6,7                                                   \
     -t                                                                          \

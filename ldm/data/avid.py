@@ -57,9 +57,13 @@ class AvidInpaint(Dataset):
 
     def __getitem__(self, i:int):
         example = self.base[i]
-        with open(example['ocr_path'], 'r', encoding='utf-8') as f:
-            ocr_data = json.load(f)
-        words = ocr_data['analyzeResult']['pages'][0]['words']
+        try:
+            with open(example['ocr_path'], 'r', encoding='utf-8') as f:
+                ocr_data = json.load(f)
+            words = ocr_data['analyzeResult']['pages'][0]['words']
+        except Exception as e:
+            print(e)
+            words = []
         if len(words) == 0:
             ret = {
                 'image': np.ones((self.size, self.size, 3), dtype=np.uint8)*255,
@@ -78,22 +82,29 @@ class AvidInpaint(Dataset):
             l = min(int(pad_span * np.random.rand()), xmin)
             t = min(int(max(crop_size - y_span, 0) * np.random.rand()), ymin)
             x_start, y_start = xmin - l, ymin - t
-            with Image.open(example['img_path']) as image:
-                if not image.mode == 'RGB':
-                    image = image.convert('RGB')
-                img = np.array(image).astype(np.uint8)
-            crop = img[y_start:y_start+crop_size, x_start:x_start+crop_size, :]
-            h, w = crop.shape[:2]
-            crop_size = max(h, w)
-            crop = np.pad(
-                crop,
-                [(0,crop_size-h),(0,crop_size-w),(0,0)],
-                mode='constant',
-                constant_values=255)
-            mask = np.zeros((crop_size, crop_size, 1), dtype=np.uint8)
-            mask[t:t+ymax-ymin, l:l+xmax-xmin] = 255
-            out = self.img_rescler(image=crop, mask=mask)
-            crop, mask = out['image'], (out['mask'] != 0).astype(np.float32)
+            try:
+                with Image.open(example['img_path']) as image:
+                    if not image.mode == 'RGB':
+                        image = image.convert('RGB')
+                    img = np.array(image).astype(np.uint8)
+                crop = img[y_start:y_start+crop_size, x_start:x_start+crop_size, :]
+                h, w = crop.shape[:2]
+                crop_size = max(h, w)
+                crop = np.pad(
+                    crop,
+                    [(0,crop_size-h),(0,crop_size-w),(0,0)],
+                    mode='constant',
+                    constant_values=255)
+                mask = np.zeros((crop_size, crop_size, 1), dtype=np.uint8)
+                mask[t:t+ymax-ymin, l:l+xmax-xmin] = 255
+                out = self.img_rescler(image=crop, mask=mask)
+                crop, mask = out['image'], (out['mask'] != 0).astype(np.float32)
+            except Exception as e:
+                print(e)
+                crop = np.ones((self.size, self.size, 3), dtype=np.uint8)*255
+                mask = np.zeros((self.size, self.size, 1), dtype=np.float32)
+                mask[:8, :8] = 1
+                text = ''
             ret = {
                 'image': crop,
                 'mask': mask,

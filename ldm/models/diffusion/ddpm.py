@@ -571,27 +571,8 @@ class LatentDiffusion(DDPM):
             wrap_native(self.model_ema, auto_wrap_policy=unet_wrap_policy)
             self.to(self.trainer.strategy.root_device)
         elif isinstance(self.trainer.strategy, DDPFullyShardedStrategy):
-            def recursive_to_device(module:nn.Module, modules:Tuple[nn.Module], device:torch.device):
-                if isinstance(module, modules):
-                    module.to(device)
-                    return
-                else:
-                    for _, sub_module in module.named_children():
-                        recursive_to_device(sub_module, modules, device)
-            self.to(self.trainer.strategy.root_device)
-            self.apply_activation_checkpointing(self.model, modules, 'fairscale_0')
-            self.apply_activation_checkpointing(self.model_ema, modules, 'fairscale_0')
-            def unet_wrap_policy(
-                module: nn.Module,
-                recurse: bool,
-                **kwargs) -> bool:
-                return True if recurse else isinstance(module, (TimestepEmbedSequential,))
-            auto_wrap_fairscale(self.model, auto_wrap_policy=unet_wrap_policy, cpu_offload=False, state_dict_on_rank_0_only=True)
-            auto_wrap_fairscale(self.model_ema, auto_wrap_policy=unet_wrap_policy, cpu_offload=False, state_dict_on_rank_0_only=True)
             if isinstance(self.cond_stage_model, (FrozenPretrainedTextEmbedder,)):
                 self.cond_stage_model.root_device = self.trainer.strategy.root_device
-                ckpt_modules = self.cond_stage_model.ckpt_cls
-                self.apply_activation_checkpointing(self.cond_stage_model, ckpt_modules, 'fairscale_0')
                 fsdp_wrap_policy = self.cond_stage_model.fsdp_wrap_policy
                 auto_wrap_fairscale(self.cond_stage_model, auto_wrap_policy=fsdp_wrap_policy, cpu_offload=False, state_dict_on_rank_0_only=True)
             self.trainer.strategy.cpu_offload = False

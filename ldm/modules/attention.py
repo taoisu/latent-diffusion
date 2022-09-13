@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 
 from einops import rearrange, repeat
+from fairscale.nn.checkpoint import checkpoint_wrapper
 from inspect import isfunction
 from torch import nn, einsum, Tensor
 
@@ -328,6 +329,7 @@ class SpatialTransformer(nn.Module):
     ):
         super().__init__()
         self.in_channels = in_channels
+        self.checkpoint = checkpoint
         inner_dim = n_heads * d_head
         self.norm = Normalize(in_channels)
 
@@ -354,6 +356,15 @@ class SpatialTransformer(nn.Module):
             kernel_size=1,
             stride=1,
             padding=0))
+
+        self.apply_actckpt()
+
+    def apply_actckpt(self):
+        def use_fairscale_actckpt(module:nn.Module):
+            return self.checkpoint == 'fairscale' and isinstance(module, (BasicTransformerBlock,))
+        for j, module in enumerate(self.transformer_blocks):
+            if use_fairscale_actckpt(module):
+                self.transformer_blocks[j] = checkpoint_wrapper(module)
 
     def forward(self, x:Tensor, context:Tensor=None, context_mask:Tensor=None):
         # note: if no context is given, cross-attention defaults to self-attention

@@ -6,6 +6,7 @@ import torch.nn.functional as F
 
 from abc import abstractmethod
 from einops import rearrange
+from fairscale.nn.checkpoint import checkpoint_wrapper
 from torch import Tensor
 from typing import List, Tuple, Union
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
@@ -784,6 +785,23 @@ class UNetModel(nn.Module):
             conv_nd(dims, model_channels, n_embed, 1),
             #nn.LogSoftmax(dim=1)  # change to cross_entropy and produce non-normalized logits
         )
+        self.apply_actckpt()
+
+    def apply_actckpt(self):
+        def use_fairscale_actckpt(module:nn.Module):
+            return self.checkpoint == 'fairscale' and isinstance(module, (ResBlock, AttentionBlock))
+        for block in self.input_blocks:
+            for j, module in enumerate(block):
+                if use_fairscale_actckpt(module):
+                    block[j] = checkpoint_wrapper(module)
+        for j, module in enumerate(self.middle_block):
+            if use_fairscale_actckpt(module):
+                self.middle_block[j] = checkpoint_wrapper(module)
+        for block in self.output_blocks:
+            for j, module in enumerate(block):
+                if use_fairscale_actckpt(module):
+                    block[j] = checkpoint_wrapper(module)
+
 
     def convert_to_fp16(self):
         """
