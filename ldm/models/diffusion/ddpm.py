@@ -18,6 +18,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from einops import rearrange, repeat
 from contextlib import contextmanager
 from fairscale.nn import checkpoint_wrapper as checkpoint_wrapper_fairscale, auto_wrap as auto_wrap_fairscale
+from fairscale.nn import FullyShardedDataParallel as FSDP_fairscale, enable_wrap as enable_wrap_fairscale
 from functools import partial
 from tqdm import tqdm
 from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy, wrap as wrap_native
@@ -30,7 +31,7 @@ from torchvision.utils import make_grid
 from torchvision.transforms import Normalize, Compose
 from typing import Any, Callable, Dict, List, Tuple, Union, Mapping
 from pytorch_lightning.utilities.distributed import rank_zero_only
-from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy, DDPFullyShardedStrategy
+from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy, DDPFullyShardedStrategy, DDPStrategy
 from ldm.modules.attention import BasicTransformerBlock, SpatialTransformer
 from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, TimestepEmbedSequential
 from ldm.modules.encoders.modules import FrozenPretrainedTextEmbedder, FrozenTextInpaintEmbedder
@@ -473,7 +474,7 @@ class LatentDiffusion(DDPM):
         cond_stage_key:str="image",
         cond_stage_trainable:bool=False,
         concat_mode:bool=True,
-        cond_stage_forward:bool=None,
+        cond_stage_forward:str=None,
         conditioning_key:str=None,
         scale_factor:float=1.0,
         scale_by_std:bool=False,
@@ -574,8 +575,25 @@ class LatentDiffusion(DDPM):
             if isinstance(self.cond_stage_model, (FrozenPretrainedTextEmbedder,)):
                 self.cond_stage_model.root_device = self.trainer.strategy.root_device
                 fsdp_wrap_policy = self.cond_stage_model.fsdp_wrap_policy
-                auto_wrap_fairscale(self.cond_stage_model, auto_wrap_policy=fsdp_wrap_policy, cpu_offload=False, state_dict_on_rank_0_only=True)
+                auto_wrap_fairscale(
+                    self.cond_stage_model,
+                    auto_wrap_policy=fsdp_wrap_policy,
+                    cpu_offload=False,
+                    mixed_precision=True,
+                    state_dict_on_rank_0_only=False)
             self.trainer.strategy.cpu_offload = False
+            self.to(self.trainer.strategy.root_device)
+        elif isinstance(self.trainer.strategy, DDPStrategy):
+            if isinstance(self.cond_stage_model, (FrozenPretrainedTextEmbedder,)):
+                self.cond_stage_model.root_device = self.trainer.strategy.root_device
+                fsdp_wrap_policy = self.cond_stage_model.fsdp_wrap_policy
+                fsdp_params = dict(wrapper_cls=FSDP_fairscale, mixed_precision=True, flatten_parameters=True)
+                with enable_wrap_fairscale(**fsdp_params):
+                    self.cond_stage_model = auto_wrap_fairscale(
+                        self.cond_stage_model,
+                        auto_wrap_policy=fsdp_wrap_policy,
+                        cpu_offload=False,
+                        state_dict_on_rank_0_only=False)
 
     @rank_zero_only
     @torch.no_grad()

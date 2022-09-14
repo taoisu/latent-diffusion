@@ -802,7 +802,6 @@ class UNetModel(nn.Module):
                 if use_fairscale_actckpt(module):
                     block[j] = checkpoint_wrapper(module)
 
-
     def convert_to_fp16(self):
         """
         Convert the torso of the model to float16.
