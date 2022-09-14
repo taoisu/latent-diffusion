@@ -38,7 +38,8 @@ def main(
         'prep_avid_gen': 'cloud/entry_avid_gen.sh',
         'prep_avid_flt': 'cloud/entry_avid_filter.sh',
         'prep_avid_gen_ocr': 'cloud/entry_avid_gen_ocr.sh',
-        'train_avid_sr_128x512': 'cloud/entry_avid_train_sr_128x512.sh',
+        'train_avid_sr_128x512_effinet': 'cloud/entry_avid_train_sr_128x512-effinet.sh',
+        'train_avid_sr_128x512_opainet': 'cloud/entry_avid_train_sr_128x512-opainet.sh',
         'train_avid_inpaint_128': 'cloud/entry_avid_train_inpaint_128.sh',
         'dbg': 'cloud/entry_dbg.sh',
     }
