@@ -4,6 +4,7 @@ model:
   params:
     linear_start: 0.0015
     linear_end: 0.012
+    beta_schedule: cosine
     num_timesteps_cond: 1
     log_every_t: 200
     timesteps: 1000
@@ -21,8 +22,9 @@ model:
         image_size: 64
         in_channels: 3
         out_channels: 3
-        model_channels: 256
-        attention_resolutions: [32, 16, 8, 4]
+        model_channels: 192
+        checkpoint: fairscale
+        attention_resolutions: [32, 16, 8]
         num_res_blocks: 3
         channel_mult: [1, 2, 4, 4]
         num_heads: 16
@@ -44,7 +46,7 @@ data:
   params:
     batch_size: 32
     wrap: false
-    num_workers: 24
+    num_workers: 40
     train:
       target: ldm.data.laion.LaionTextToImageTrain
       params:
@@ -63,7 +65,7 @@ lightning:
     image_logger:
       target: main.ImageLogger
       params:
-        batch_frequency: 5000
+        batch_frequency: 2500
         increase_log_steps: false
         max_images: 8
         clamp: true
@@ -73,7 +75,7 @@ lightning:
           inpaint: false
   modelcheckpoint:
     params:
-      every_n_train_steps: 100000
+      every_n_train_steps: 2500
   trainer:
     benchmark: True
     max_epochs: -1

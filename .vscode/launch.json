@@ -128,16 +128,18 @@
             "request": "launch",
             "program": "main.py",
             "args": [
+                "--scale_lr",
+                "false",
                 "--base",
-                "configs/just-diffusion/txt2imglaion2b64_fsdp-fairscale.yaml",
+                "configs/just-diffusion/txt2imglaion2b64_fsdp-fairscale-t5xxl.yaml",
                 "--accelerator",
                 "gpu",
                 "--devices",
-                "0,1,2,3,4,5,6,7",
+                "0,1",
                 "-t",
             ],
             "env": {
-                "LAION_ROOT_DIR": "/mnt/azureml/cr/j/df945512e57a401c89294d02b65004d8/cap/data-capability/wd/INPUT_ocrd_airocrhbi_ocr_data/Vertical/vdipainter/data",
+                "LAION_ROOT_DIR": "/mnt/batch/tasks/shared/LS_root/jobs/ocr2/azureml/vdipt_1663017548_c18fd96b/mounts/airocrhbi_ocr_data/Vertical/vdipainter/data",
                 "CUDA_LAUNCH_BLOCKING": "1",
                 "TOKENIZERS_PARALLELISM": "false"
             },
