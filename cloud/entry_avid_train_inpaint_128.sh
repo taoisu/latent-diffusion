@@ -16,6 +16,7 @@ export LOG_DIR="${AZUREML_DATAREFERENCE_ocrd}/Vertical/vdipainter/logs/inpaintav
 export TOKENIZERS_PARALLELISM="false"
 
 python3 main.py                                                                 \
+    --scale_lr false                                                            \
     --base configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-t5xl.yaml    \
     --accelerator gpu                                                           \
     --devices 0,1,2,3,4,5,6,7                                                   \

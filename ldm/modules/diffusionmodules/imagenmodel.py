@@ -1,6 +1,7 @@
 import torch as th
 import torch.nn as nn
 
+from fairscale.nn.checkpoint import checkpoint_wrapper
 from omegaconf import ListConfig
 from typing import Dict, List, Union, Tuple
 
@@ -59,7 +60,6 @@ class EfficientUNetModel(nn.Module):
         transformer_depth:int=1,
         context_dim:int=None,
         contexts:Dict=None,
-        precision:int=None,
         skip_rescale:bool=False,
     ) -> None:
         super().__init__()
@@ -85,7 +85,6 @@ class EfficientUNetModel(nn.Module):
         self.context_dim = context_dim
         self.resblock_updown = resblock_updown
         self.use_scale_shift_norm = use_scale_shift_norm
-        self.precision = precision
         self.contexts = contexts
         self.skip_rescale = skip_rescale
 
@@ -102,10 +101,20 @@ class EfficientUNetModel(nn.Module):
                 pooled_dim = val['pooled_dim']
                 self.register_module(
                     f'{key}_crossattn_proj',
-                    linear(seq_dim, context_dim) if seq_dim != context_dim else nn.Identity())
+                    nn.Sequential(
+                        nn.LayerNorm(seq_dim),
+                        linear(seq_dim, context_dim),
+                        nn.SiLU(),
+                        linear(context_dim, context_dim),
+                    ))
                 self.register_module(
                     f'{key}_emb_proj',
-                    linear(pooled_dim, time_embed_dim) if pooled_dim != time_embed_dim else nn.Identity())
+                    nn.Sequential(
+                        nn.LayerNorm(pooled_dim),
+                        linear(pooled_dim, time_embed_dim),
+                        nn.SiLU(),
+                        linear(time_embed_dim, time_embed_dim),
+                    ))
 
         self.i_block = TimeEmbSeq(conv_nd(dims, in_channels, model_channels, 3, padding=1))
 
@@ -179,6 +188,25 @@ class EfficientUNetModel(nn.Module):
             nn.SiLU(),
             zero_module(conv_nd(dims, model_channels, out_channels, 3, padding=1)),
         )
+        self.apply_actckpt()
+
+    def apply_actckpt(self):
+        def use_fairscale_actckpt(module:nn.Module):
+            return self.checkpoint == 'fairscale' and isinstance(module, (ResBlock,))
+        for j, module in enumerate(self.i_block):
+            if use_fairscale_actckpt(module):
+                self.i_block[j] = checkpoint_wrapper(module)
+        for block in self.d_blocks:
+            for j, module in enumerate(block):
+                if use_fairscale_actckpt(module):
+                    block[j] = checkpoint_wrapper(module)
+        for j, module in enumerate(self.e_block):
+            if use_fairscale_actckpt(module):
+                self.e_block[j] = checkpoint_wrapper(module)
+        for block in self.u_blocks:
+            for j, module in enumerate(block):
+                if use_fairscale_actckpt(module):
+                    block[j] = checkpoint_wrapper(module)
 
     def make_ublock(
         self,
@@ -348,6 +376,7 @@ class EfficientUNetModel(nn.Module):
         t_emb = timestep_embedding(timesteps, model_channels, repeat_only=False, dtype=dtype)
         emb = self.time_embed(t_emb)
 
+        context_mask = None
         if isinstance(context, Dict):
             crossattn_context = []
             for key, val in context.items():
@@ -357,18 +386,20 @@ class EfficientUNetModel(nn.Module):
                 if 'crossattn' in val:
                     proj_module = getattr(self, f'{key}_crossattn_proj')
                     crossattn_context.append(proj_module(val['crossattn']))
+                if 'crossattn_mask' in val:
+                    context_mask = val['crossattn_mask'] == 1
             crossattn_context = th.cat(crossattn_context, dim=1)
             context = crossattn_context
 
         h = x
-        h = self.i_block(h, emb, context)
+        h = self.i_block(h, emb, context, context_mask)
         for module in self.d_blocks:
-            h = module(h, emb, context)
+            h = module(h, emb, context, context_mask)
             hs.append(h)
-        h = self.e_block(h, emb, context)
+        h = self.e_block(h, emb, context, context_mask)
         for module in self.u_blocks:
             h = th.cat([h, hs.pop()], dim=1)
-            h = module(h, emb, context)
+            h = module(h, emb, context, context_mask)
         return self.out(h)
 
 
