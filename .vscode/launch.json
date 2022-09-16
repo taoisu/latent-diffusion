@@ -47,10 +47,11 @@
             "program": "ldm/data/avid.py",
             "args": [
                 "--mode",
-                "test_inpaint"
+                "test_inpaint_img"
             ],
             "env": {
-                "AVID_ROOT_DIR": "/mount/airocrhbi/ocr-data/Vertical/vdipainter/data/avidxchange"
+                "AVID_ROOT_DIR": "/home/xiaguo/guided-diffusion/data",
+                "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/ldm/assets/FreeSerif.ttf"
             },
             "console": "integratedTerminal",
             "justMyCode": true
