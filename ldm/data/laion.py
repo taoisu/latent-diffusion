@@ -54,9 +54,14 @@ class LaionTextToImage(Dataset):
         img_name = f'{idx}.jpg'
         img_path = self.cache_dir / img_name
         assert img_path.exists()
-        with Image.open(img_path) as image:
-            image = image.convert('RGB')
-            img = np.array(image).astype(np.uint8)
+        try:
+            with Image.open(img_path) as image:
+                image = image.convert('RGB')
+                img = np.array(image).astype(np.uint8)
+        except Exception as e:
+            print(e)
+            sz = self.size
+            img = np.ones((sz, sz, 3), dtype=np.uint8)*255
         text = item['TEXT'] or ''
         min_side_len = min(img.shape[:2])
         self.cropper = al.RandomCrop(height=min_side_len, width=min_side_len)
