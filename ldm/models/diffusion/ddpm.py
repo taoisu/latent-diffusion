@@ -822,7 +822,7 @@ class LatentDiffusion(DDPM):
             if cond_key != self.first_stage_key:
                 if cond_key in ['caption', 'coordinates_bbox']:
                     xc = batch[cond_key]
-                elif cond_key in ['class_label', 'patch', 'text']:
+                elif cond_key in ['class_label', 'patch', 'text', 'txt_image']:
                     xc = batch
                 elif cond_key == 'lr_image':
                     xc = super().get_input(batch, cond_key).to(self.device)
@@ -832,7 +832,7 @@ class LatentDiffusion(DDPM):
             else:
                 xc = x
             if not self.cond_stage_trainable or force_c_encode:
-                if isinstance(xc, dict) or isinstance(xc, list):
+                if isinstance(xc, (dict, list)):
                     # import pudb; pudb.set_trace()
                     c = self.get_learned_conditioning(xc)
                 else:
@@ -1063,7 +1063,7 @@ class LatentDiffusion(DDPM):
     ):
         if isinstance(cond, dict):
             # hybrid case, cond is exptected to be a dict
-            cond = deepcopy(cond)
+            # cond = deepcopy(cond)
             for k in list(cond.keys()):
                 if not isinstance(cond[k], list):
                     cond[k] = [cond[k]]

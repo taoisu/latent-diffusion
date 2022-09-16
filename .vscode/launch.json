@@ -102,6 +102,29 @@
             "justMyCode": false
         },
         {
+            "name": "main.py - train inpaint txtimg avid",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "args": [
+                "--scale_lr",
+                "false",
+                "--base",
+                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-vitt16.yaml",
+                "--accelerator",
+                "gpu",
+                "--devices",
+                "0,1",
+                "-t",
+            ],
+            "env": {
+                "AVID_ROOT_DIR": "/home/xiaguo/guided-diffusion/data",
+                "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/assets/FreeSerif.ttf",
+                "CUDA_LAUNCH_BLOCKING": "1",
+            },
+            "justMyCode": false
+        },
+        {
             "name": "main.py - train sr avid",
             "type": "python",
             "request": "launch",

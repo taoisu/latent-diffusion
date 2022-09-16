@@ -1,0 +1,90 @@
+model:
+  base_learning_rate: 5.0e-05
+  target: ldm.models.diffusion.ddpm.LatentDiffusion
+  params:
+    linear_start: 0.0015
+    linear_end: 0.012
+    beta_schedule: cosine
+    num_timesteps_cond: 1
+    log_every_t: 200
+    timesteps: 1000
+    loss_type: l2
+    first_stage_key: image
+    cond_stage_key: txt_image
+    image_size: 128
+    channels: 3
+    cond_stage_trainable: true
+    conditioning_key: tybrid
+    monitor: val/loss_simple_ema
+    unet_config:
+      target: ldm.modules.diffusionmodules.openaimodel.UNetModel
+      params:
+        image_size: 128
+        in_channels: 3
+        out_channels: 3
+        model_channels: 256
+        checkpoint: fairscale
+        attention_resolutions: [32, 16]
+        num_res_blocks: 3
+        channel_mult: [1, 2, 4, 4]
+        num_heads: 8
+        use_spatial_transformer: true
+        transformer_depth: 1
+        context_dim: 512
+        contexts:
+          txtimg:
+            seq_dim: 768
+            pooled_dim: 768
+    first_stage_config:
+      target: ldm.models.autoencoder.IdentityFirstStage
+    cond_stage_config:
+      target: ldm.modules.encoders.modules.TextImageEmbedder
+      params:
+        img_height: 32
+        patch_size: 16
+        hidden_dim: 768
+        num_layers: 6
+        num_heads: 12
+        out_dim: 768
+        checkpoint: fairscale
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 32
+    wrap: false
+    num_workers: 32
+    train:
+      target: ldm.data.avid.AvidInpaintTxtImgTrain
+      params:
+        size: 128
+        names: [Random]
+        font_size: 24
+        img_height: 32
+    validation:
+      target: ldm.data.avid.AvidInpaintTxtImgValidation
+      params:
+        size: 128
+        font_size: 24
+        img_height: 32
+lightning:
+  callbacks:
+    image_logger:
+      target: main.ImageLogger
+      params:
+        batch_frequency: 2500
+        increase_log_steps: false
+        max_images: 8
+        clamp: true
+        log_images_kwargs:
+          plot_diffusion_rows: true
+          plot_progressive_rows: false
+          inpaint: false
+          sample: false
+  modelcheckpoint:
+    params:
+      every_n_train_steps: 2500
+  trainer:
+    benchmark: True
+    max_epochs: -1
+    precision: 16
+    strategy: fsdp
