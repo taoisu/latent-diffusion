@@ -1,6 +1,8 @@
 import clip
 import kornia
 import torch
+
+import numpy as np
 import torch as th
 import torch.nn as nn
 
@@ -13,7 +15,10 @@ from einops import rearrange, repeat
 from transformers import AutoTokenizer
 from transformers.models.t5.modeling_t5 import T5Block, T5EncoderModel
 
+from PIL import Image
+
 from ldm.modules.x_transformer import Encoder, TransformerWrapper  # TODO: can we directly rely on lucidrains code and simply add this as a reuirement? --> test
+from ldm.modules.diffusionmodules.vit import TextVisionTransformer
 
 
 class AbstractEncoder(nn.Module):
@@ -227,6 +232,63 @@ class SpatialRescaler(nn.Module):
 
     def encode(self, x):
         return self(x)
+
+
+class TextImageEmbedder(AbstractEncoder):
+    '''
+    Embed text line image w/ ViT style encoder
+    '''
+    def __init__(
+        self,
+        img_height:int,
+        patch_size:int,
+        hidden_dim:int,
+        num_layers:int,
+        num_heads:int,
+        out_dim:int,
+        max_patch_len:int=128,
+        checkpoint:str=None,
+    ):
+        super().__init__()
+        self.model = TextVisionTransformer(
+            img_height, patch_size, hidden_dim, num_layers, num_heads, out_dim, max_patch_len, checkpoint
+        )
+
+    def forward(self, x:torch.Tensor):
+        return self.model(x)
+
+    def encode(self, cond:Dict):
+        txt_images = cond['txt_image']
+        max_width = max(txt_img.size[0] for txt_img in txt_images)
+        txt_imgs_tsr = []
+        for txt_image in txt_images:
+            _, height = txt_image.size
+            txt_image_pad = Image.new(txt_image.mode, (max_width, height), 'white')
+            txt_image_pad.paste(txt_image, (0, 0))
+            txt_img_tsr = np.array(txt_image_pad).astype(np.uint8)
+            txt_imgs_tsr.append(txt_img_tsr)
+        txt_imgs_tsr = np.stack(txt_imgs_tsr)
+        txt_imgs_tsr = (txt_imgs_tsr/127.5-1.0).astype(np.float32)
+        txt_imgs_tsr = torch.from_numpy(txt_imgs_tsr).to(cond['image'])
+        txt_imgs_tsr = rearrange(txt_imgs_tsr, 'b h w c -> b c h w')
+        outputs = self(txt_imgs_tsr)
+        cls_hidden_state = outputs[:, 0, :]
+        return {
+            'c_crossattn': outputs,
+            'c_emb': cls_hidden_state,
+            'c_name': 'txtimg',
+        }
+
+
+class TextImageInpaintEmbedder(TextImageEmbedder):
+    '''
+    Embed text with vit transformer
+    '''
+    def encode(self, cond:Dict):
+        ret = super().encode(cond)
+        mask = cond['mask']
+        ret.update({ 'c_mask': rearrange(mask, 'b h w c -> b c h w') })
+        return ret
 
 
 class FrozenPretrainedTextEmbedder(AbstractEncoder):

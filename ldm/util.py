@@ -2,17 +2,18 @@ import fairscale
 import importlib
 import torch
 
+import multiprocessing as mp
 import numpy as np
 import torch.nn as nn
-from collections import abc
 
-import multiprocessing as mp
+from collections import abc
+from einops import rearrange
 from threading import Thread
 from queue import Queue
 
 from inspect import isfunction
 from PIL import Image, ImageDraw, ImageFont
-from typing import Dict
+from typing import Dict, List
 
 
 def log_txt_as_img(wh, xc, size=10):
@@ -37,6 +38,18 @@ def log_txt_as_img(wh, xc, size=10):
     txts = np.stack(txts)
     txts = torch.tensor(txts)
     return txts
+
+
+def log_pil_as_img(wh:tuple, xc:List[Image.Image]):
+    imgs = []
+    for img in xc:
+        canvas = Image.new('RGB', wh, 'white')
+        canvas.paste(img)
+        canvas = np.array(canvas)/127.5-1.0
+        imgs.append(canvas)
+    imgs = np.stack(imgs)
+    imgs = rearrange(torch.tensor(imgs), 'b h w c -> b c h w')
+    return imgs
 
 
 def ismap(x):

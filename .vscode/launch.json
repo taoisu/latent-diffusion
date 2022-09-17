@@ -47,10 +47,11 @@
             "program": "ldm/data/avid.py",
             "args": [
                 "--mode",
-                "test_inpaint"
+                "test_inpaint_img"
             ],
             "env": {
-                "AVID_ROOT_DIR": "/mount/airocrhbi/ocr-data/Vertical/vdipainter/data/avidxchange"
+                "AVID_ROOT_DIR": "/home/xiaguo/guided-diffusion/data",
+                "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/ldm/assets/FreeSerif.ttf"
             },
             "console": "integratedTerminal",
             "justMyCode": true
@@ -97,6 +98,29 @@
                 "AVID_ROOT_DIR": "/mnt/batch/tasks/shared/LS_root/jobs/ocr2/azureml/vdipt_1663017548_c18fd96b/mounts/airocrhbi_ocr_data/Vertical/vdipainter/data/avidxchange",
                 "CUDA_LAUNCH_BLOCKING": "1",
                 "TOKENIZERS_PARALLELISM": "false"
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "main.py - train inpaint txtimg avid",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "args": [
+                "--scale_lr",
+                "false",
+                "--base",
+                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-vitt10.yaml",
+                "--accelerator",
+                "gpu",
+                "--devices",
+                "0,1",
+                "-t",
+            ],
+            "env": {
+                "AVID_ROOT_DIR": "/home/xiaguo/guided-diffusion/data",
+                "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/assets/FreeSerif.ttf",
+                "CUDA_LAUNCH_BLOCKING": "1",
             },
             "justMyCode": false
         },

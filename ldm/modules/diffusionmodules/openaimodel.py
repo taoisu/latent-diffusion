@@ -869,7 +869,7 @@ class UNetModel(nn.Module):
                 if 'crossattn' in val:
                     proj_module = getattr(self, f'{key}_crossattn_proj')
                     crossattn_context.append(proj_module(val['crossattn']))
-                if 'crossattn_mask' in val:
+                if 'crossattn_mask' in val and val['crossattn_mask'] is not None:
                     context_mask = val['crossattn_mask'] == 1
             crossattn_context = th.cat(crossattn_context, dim=1)
             context = crossattn_context

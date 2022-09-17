@@ -32,11 +32,13 @@ from torchvision.transforms import Normalize, Compose
 from typing import Any, Callable, Dict, List, Tuple, Union, Mapping
 from pytorch_lightning.utilities.distributed import rank_zero_only
 from pytorch_lightning.strategies import DeepSpeedStrategy, DDPFullyShardedNativeStrategy, DDPFullyShardedStrategy, DDPStrategy
+
+from PIL import Image
+
 from ldm.modules.attention import BasicTransformerBlock, SpatialTransformer
 from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, TimestepEmbedSequential
-from ldm.modules.encoders.modules import FrozenPretrainedTextEmbedder, FrozenTextInpaintEmbedder
-
-from ldm.util import log_txt_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
+from ldm.modules.encoders.modules import FrozenPretrainedTextEmbedder, FrozenTextInpaintEmbedder, TextImageInpaintEmbedder
+from ldm.util import log_txt_as_img, log_pil_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
 from ldm.modules.ema import LitEma, LitEmaGnrl
 from ldm.modules.distributions.distributions import normal_kl, DiagonalGaussianDistribution
 from ldm.models.autoencoder import VQModelInterface, IdentityFirstStage, AutoencoderKL
@@ -822,7 +824,7 @@ class LatentDiffusion(DDPM):
             if cond_key != self.first_stage_key:
                 if cond_key in ['caption', 'coordinates_bbox']:
                     xc = batch[cond_key]
-                elif cond_key in ['class_label', 'patch', 'text']:
+                elif cond_key in ['class_label', 'patch', 'text', 'txt_image']:
                     xc = batch
                 elif cond_key == 'lr_image':
                     xc = super().get_input(batch, cond_key).to(self.device)
@@ -832,7 +834,7 @@ class LatentDiffusion(DDPM):
             else:
                 xc = x
             if not self.cond_stage_trainable or force_c_encode:
-                if isinstance(xc, dict) or isinstance(xc, list):
+                if isinstance(xc, (dict, list)):
                     # import pudb; pudb.set_trace()
                     c = self.get_learned_conditioning(xc)
                 else:
@@ -1063,7 +1065,8 @@ class LatentDiffusion(DDPM):
     ):
         if isinstance(cond, dict):
             # hybrid case, cond is exptected to be a dict
-            cond = deepcopy(cond)
+            # cond = deepcopy(cond)
+            cond = { k: v for k, v in cond.items() }
             for k in list(cond.keys()):
                 if not isinstance(cond[k], list):
                     cond[k] = [cond[k]]
@@ -1535,6 +1538,11 @@ class LatentDiffusion(DDPM):
             elif self.cond_stage_key in ["caption", "text"]:
                 xc = log_txt_as_img((x.shape[2], x.shape[3]), batch[self.cond_stage_key])
                 log["conditioning"] = xc
+            elif self.cond_stage_key == 'txt_image':
+                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch['text'])
+                log["conditioning"] = xc
+                xc = log_pil_as_img((x.shape[2], x.shape[3]), batch['txt_image'])
+                log["conditioning_rendered"] = xc
             elif self.cond_stage_key == 'class_label':
                 xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["human_label"])
                 log['conditioning'] = xc
@@ -1547,7 +1555,7 @@ class LatentDiffusion(DDPM):
             if ismap(xc):
                 log["original_conditioning"] = self.to_rgb(xc)
 
-        if isinstance(self.cond_stage_model, FrozenTextInpaintEmbedder):
+        if isinstance(self.cond_stage_model, (FrozenTextInpaintEmbedder, TextImageInpaintEmbedder)):
             if 'c_concat' in c:
                 log['concat'] = c['c_concat']
             mask = 1 - rearrange(batch['mask'][:N], 'b h w c -> b c h w')
@@ -1565,6 +1573,24 @@ class LatentDiffusion(DDPM):
             x_samples = self.decode_first_stage(samples.to(self.device))
             log["samples_text_inpaint"] = x_samples
 
+            if isinstance(self.cond_stage_model, TextImageInpaintEmbedder):
+                batch_uncond = deepcopy(batch)
+                batch_uncond['text'] = ['' for _ in batch_uncond['text']]
+                batch_uncond['txt_image'] = [ Image.new(img.mode, img.size, 'white') for img in batch['txt_image'] ]
+                _, uncond_c = self.get_input(batch_uncond, self.first_stage_key, force_c_encode=True, bs=N)
+                with self.ema_scope("Poltting Inpaint w/ classifier free guidence 2.0"):
+                    samples, _ = self.sample_log(
+                        cond=c,
+                        batch_size=N,
+                        ddim=use_ddim,
+                        eta=ddim_eta,
+                        ddim_steps=ddim_steps,
+                        x0=z[:N],
+                        mask=mask,
+                        unconditional_guidance_scale=2.0,
+                        unconditional_conditioning=uncond_c)
+                x_samples = self.decode_first_stage(samples.to(self.device))
+                log["samples_text_inpaint_cf_guide_2.0"] = x_samples
 
         if plot_diffusion_rows:
             # get diffusion row
@@ -1675,8 +1701,7 @@ class LatentDiffusion(DDPM):
                     log["samples_inpainting"] = x_samples
 
                     # inpaint w/ shuffled patch
-                    import copy
-                    c_shuffle = copy.deepcopy(c)
+                    c_shuffle = deepcopy(c)
                     idx = torch.randperm(N)
                     c_shuffle['c_crossattn'] = c_shuffle['c_crossattn'][idx]
                     c_shuffle['c_emb'] = c_shuffle['c_emb'][idx]

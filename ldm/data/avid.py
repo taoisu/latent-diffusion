@@ -15,7 +15,7 @@ from torch.utils.data import Dataset
 from tqdm import tqdm
 from typing import List
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from ldm.modules.image_degradation import (
     degradation_fn_bsr,
@@ -27,7 +27,7 @@ class AvidInpaint(Dataset):
 
     def __init__(
         self,
-        size:int=None,
+        size:int,
         min_pad_f:float=20,
         max_pad_f:float=60,
         limit:int=40,
@@ -174,7 +174,59 @@ class AvidInpaintTrain(AvidInpaint):
             kwargs.update({ 'names': ['Limit1'] })
         super().__init__(**kwargs)
 
+
 class AvidInpaintValidation(AvidInpaint):
+
+    def __init__(self, num_items:int=1024, **kwargs):
+        if 'names' not in kwargs:
+            kwargs.update({ 'names': ['Random'] })
+        super().__init__(**kwargs)
+        self.base = self.base[:num_items]
+
+
+class AvidInpaintTxtImg(AvidInpaint):
+
+    def __init__(
+        self,
+        font_size:int=24,
+        img_height:int=32,
+        dropout:float=0.0,
+        **kwargs
+    ):
+        super().__init__(**kwargs)
+        font_path = os.environ['AVID_FONT_PATH']
+        self.font = ImageFont.truetype(font_path, font_size)
+        self.img_height = img_height
+        self.dropout = dropout
+
+    def __getitem__(self, i:int):
+        item = super().__getitem__(i)
+
+        text = item['text']
+        if np.random.random() < self.dropout:
+            text = ''
+        font_size = self.font.size
+        height = self.img_height
+        assert height >= font_size
+        pad = (height - font_size) // 2
+        width = self.font.getlength(text)+height-font_size
+        width = int((width+height-1)//height*height)
+        canvas = Image.new('RGB', (width, height), color='white')
+        draw = ImageDraw.Draw(canvas)
+        draw.text((pad, -pad), text, font=self.font, fill='black')
+        item['txt_image'] = canvas
+        return item
+
+
+class AvidInpaintTxtImgTrain(AvidInpaintTxtImg):
+
+    def __init__(self, **kwargs):
+        if 'names' not in kwargs:
+            kwargs.update({ 'names': ['Limit1'] })
+        super().__init__(**kwargs)
+
+
+class AvidInpaintTxtImgValidation(AvidInpaintTxtImg):
 
     def __init__(self, num_items:int=1024, **kwargs):
         if 'names' not in kwargs:
@@ -367,6 +419,13 @@ def test_inpaint_dataset():
         mask = np.repeat(mask, 3, -1)
         Image.fromarray(mask).save('b.jpg')
 
+def test_inpaint_img_dataset():
+    ds = AvidInpaintTxtImg(size=128, names=['Random'])
+    for i in range(len(ds)):
+        example = ds[i]
+        print(example['text'])
+        example['txt_image'].save('a.jpg')
+
 
 def main(mode:str):
     if mode == 'gen':
@@ -377,6 +436,8 @@ def main(mode:str):
         gen_ocr_list()
     elif mode == 'test_inpaint':
         test_inpaint_dataset()
+    elif mode == 'test_inpaint_img':
+        test_inpaint_img_dataset()
 
 
 if __name__ == '__main__':
