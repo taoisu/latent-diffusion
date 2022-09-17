@@ -57,7 +57,7 @@ data:
       target: ldm.data.avid.AvidInpaintTxtImgTrain
       params:
         size: 128
-        names: [Random]
+        names: [Limit1]
         font_size: 16
         img_height: 20
         dropout: 0.1
