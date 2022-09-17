@@ -110,7 +110,7 @@
                 "--scale_lr",
                 "false",
                 "--base",
-                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-vitt16.yaml",
+                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-vitt10.yaml",
                 "--accelerator",
                 "gpu",
                 "--devices",
