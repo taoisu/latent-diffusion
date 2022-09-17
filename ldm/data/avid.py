@@ -190,17 +190,21 @@ class AvidInpaintTxtImg(AvidInpaint):
         self,
         font_size:int=24,
         img_height:int=32,
+        dropout:float=0.0,
         **kwargs
     ):
         super().__init__(**kwargs)
         font_path = os.environ['AVID_FONT_PATH']
         self.font = ImageFont.truetype(font_path, font_size)
         self.img_height = img_height
+        self.dropout = dropout
 
     def __getitem__(self, i:int):
         item = super().__getitem__(i)
 
         text = item['text']
+        if np.random.random() < self.dropout:
+            text = ''
         font_size = self.font.size
         height = self.img_height
         assert height >= font_size

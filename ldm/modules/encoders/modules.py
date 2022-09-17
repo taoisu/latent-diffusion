@@ -257,8 +257,8 @@ class TextImageEmbedder(AbstractEncoder):
     def forward(self, x:torch.Tensor):
         return self.model(x)
 
-    def encode(self, batch:Dict):
-        txt_images = batch['txt_image']
+    def encode(self, cond:Dict):
+        txt_images = cond['txt_image']
         max_width = max(txt_img.size[0] for txt_img in txt_images)
         txt_imgs_tsr = []
         for txt_image in txt_images:
@@ -269,7 +269,7 @@ class TextImageEmbedder(AbstractEncoder):
             txt_imgs_tsr.append(txt_img_tsr)
         txt_imgs_tsr = np.stack(txt_imgs_tsr)
         txt_imgs_tsr = (txt_imgs_tsr/127.5-1.0).astype(np.float32)
-        txt_imgs_tsr = torch.from_numpy(txt_imgs_tsr).to(batch['image'])
+        txt_imgs_tsr = torch.from_numpy(txt_imgs_tsr).to(cond['image'])
         txt_imgs_tsr = rearrange(txt_imgs_tsr, 'b h w c -> b c h w')
         outputs = self(txt_imgs_tsr)
         cls_hidden_state = outputs[:, 0, :]
@@ -278,6 +278,17 @@ class TextImageEmbedder(AbstractEncoder):
             'c_emb': cls_hidden_state,
             'c_name': 'txtimg',
         }
+
+
+class TextImageInpaintEmbedder(TextImageEmbedder):
+    '''
+    Embed text with vit transformer
+    '''
+    def encode(self, cond:Dict):
+        ret = super().encode(cond)
+        mask = cond['mask']
+        ret.update({ 'c_mask': rearrange(mask, 'b h w c -> b c h w') })
+        return ret
 
 
 class FrozenPretrainedTextEmbedder(AbstractEncoder):

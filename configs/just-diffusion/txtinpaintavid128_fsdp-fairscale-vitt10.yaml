@@ -38,10 +38,10 @@ model:
     first_stage_config:
       target: ldm.models.autoencoder.IdentityFirstStage
     cond_stage_config:
-      target: ldm.modules.encoders.modules.TextImageEmbedder
+      target: ldm.modules.encoders.modules.TextImageInpaintEmbedder
       params:
-        img_height: 32
-        patch_size: 16
+        img_height: 20
+        patch_size: 10
         hidden_dim: 768
         num_layers: 6
         num_heads: 12
@@ -58,20 +58,21 @@ data:
       params:
         size: 128
         names: [Random]
-        font_size: 24
-        img_height: 32
+        font_size: 16
+        img_height: 20
+        dropout: 0.1
     validation:
       target: ldm.data.avid.AvidInpaintTxtImgValidation
       params:
         size: 128
-        font_size: 24
-        img_height: 32
+        font_size: 16
+        img_height: 20
 lightning:
   callbacks:
     image_logger:
       target: main.ImageLogger
       params:
-        batch_frequency: 2500
+        batch_frequency: 1000
         increase_log_steps: false
         max_images: 8
         clamp: true
@@ -82,7 +83,7 @@ lightning:
           sample: false
   modelcheckpoint:
     params:
-      every_n_train_steps: 2500
+      every_n_train_steps: 1000
   trainer:
     benchmark: True
     max_epochs: -1
