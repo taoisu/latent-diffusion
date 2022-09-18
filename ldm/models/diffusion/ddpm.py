@@ -37,7 +37,12 @@ from PIL import Image
 
 from ldm.modules.attention import BasicTransformerBlock, SpatialTransformer
 from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, TimestepEmbedSequential
-from ldm.modules.encoders.modules import FrozenPretrainedTextEmbedder, FrozenTextInpaintEmbedder, TextImageInpaintEmbedder
+from ldm.modules.encoders.modules import (
+    FrozenPretrainedTextEmbedder,
+    FrozenTextInpaintEmbedder,
+    TextImageInpaintEmbedder,
+    FrozenPretrainedImageEmbedder,
+)
 from ldm.util import log_txt_as_img, log_pil_as_img, exists, default, ismap, isimage, mean_flat, count_params, instantiate_from_config
 from ldm.modules.ema import LitEma, LitEmaGnrl
 from ldm.modules.distributions.distributions import normal_kl, DiagonalGaussianDistribution
@@ -1555,7 +1560,12 @@ class LatentDiffusion(DDPM):
             if ismap(xc):
                 log["original_conditioning"] = self.to_rgb(xc)
 
-        if isinstance(self.cond_stage_model, (FrozenTextInpaintEmbedder, TextImageInpaintEmbedder)):
+        classes = (
+            FrozenTextInpaintEmbedder,
+            TextImageInpaintEmbedder,
+            FrozenPretrainedImageEmbedder,
+        )
+        if isinstance(self.cond_stage_model, classes):
             if 'c_concat' in c:
                 log['concat'] = c['c_concat']
             mask = 1 - rearrange(batch['mask'][:N], 'b h w c -> b c h w')
@@ -1573,7 +1583,7 @@ class LatentDiffusion(DDPM):
             x_samples = self.decode_first_stage(samples.to(self.device))
             log["samples_text_inpaint"] = x_samples
 
-            if isinstance(self.cond_stage_model, TextImageInpaintEmbedder):
+            if isinstance(self.cond_stage_model, (TextImageInpaintEmbedder, FrozenPretrainedImageEmbedder)):
                 batch_uncond = deepcopy(batch)
                 batch_uncond['text'] = ['' for _ in batch_uncond['text']]
                 batch_uncond['txt_image'] = [ Image.new(img.mode, img.size, 'white') for img in batch['txt_image'] ]

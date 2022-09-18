@@ -13,14 +13,14 @@ model:
     cond_stage_key: txt_image
     image_size: 128
     channels: 3
-    cond_stage_trainable: true
+    cond_stage_trainable: false
     conditioning_key: tybrid
     monitor: val/loss_simple_ema
     unet_config:
       target: ldm.modules.diffusionmodules.openaimodel.UNetModel
       params:
         image_size: 128
-        in_channels: 3
+        in_channels: 4
         out_channels: 3
         model_channels: 160
         checkpoint: fairscale
@@ -33,20 +33,20 @@ model:
         context_dim: 512
         contexts:
           txtimg:
-            seq_dim: 768
-            pooled_dim: 768
+            seq_dim: 1024
+            pooled_dim: 1024
     first_stage_config:
       target: ldm.models.autoencoder.IdentityFirstStage
     cond_stage_config:
-      target: ldm.modules.encoders.modules.TextImageInpaintEmbedder
+      target: ldm.modules.encoders.modules.FrozenPretrainedImageEmbedder
       params:
-        img_height: 20
-        patch_size: 10
-        hidden_dim: 768
-        num_layers: 6
-        num_heads: 12
-        out_dim: 768
-        checkpoint: fairscale
+        model_name: google/vit-large-patch16-224
+        image_size: 128
+        canvas_pad: 12
+        with_concat: true
+        with_emb: true
+        with_crossattn: true
+        with_mask: true
 data:
   target: main.DataModuleFromConfig
   params:
@@ -60,7 +60,7 @@ data:
         names: [Limit1]
         font_size: 16
         img_height: 20
-        dropout: 0.1
+        dropout: 0.2
     validation:
       target: ldm.data.avid.AvidInpaintTxtImgValidation
       params:
@@ -72,7 +72,7 @@ lightning:
     image_logger:
       target: main.ImageLogger
       params:
-        batch_frequency: 1000
+        batch_frequency: 2000
         increase_log_steps: false
         max_images: 8
         clamp: true
@@ -83,7 +83,7 @@ lightning:
           sample: false
   modelcheckpoint:
     params:
-      every_n_train_steps: 1000
+      every_n_train_steps: 2000
   trainer:
     benchmark: True
     max_epochs: -1
