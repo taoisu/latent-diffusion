@@ -42,6 +42,7 @@ def main(
         'train_avid_sr_128x512_opainet': 'cloud/entry_avid_train_sr_128x512-opainet.sh',
         'train_avid_inpaint_128_t5xxl': 'cloud/entry_avid_train_inpaint_128-t5xxl.sh',
         'train_avid_inpaint_128_vitt10': 'cloud/entry_avid_train_inpaint_128-vitt10.sh',
+        'train_avid_inpaint_128_hgvitl16-224': 'cloud/entry_avid_train_inpaint_128-hgvitl16-224.sh',
         'dbg': 'cloud/entry_dbg.sh',
     }
     script = scripts[task]
