@@ -381,6 +381,9 @@ class FrozenPretrainedImageEmbedder(AbstractEncoder):
         ret.update({ 'c_name': 'txtimg' })
         return ret
 
+    def state_dict(self, *args, destination=None, prefix='', keep_vars=False):
+        return {}
+
 
 class FrozenPretrainedTextEmbedder(AbstractEncoder):
     '''
