@@ -20,13 +20,13 @@ model:
       params:
           in_channels: 6
           out_channels: 3
-          model_channels: 192
+          model_channels: 160
           attention_resolutions: [32, 16]
           num_res_blocks: [1, 2, 3, 4]
           channel_mult: [1, 2, 3, 4]
           num_heads: 8
           resblock_updown: true
-          context_dim: 768
+          context_dim: 640
           checkpoint: fairscale
           skip_rescale: false
     first_stage_config:
@@ -74,5 +74,4 @@ lightning:
   trainer:
     benchmark: True
     max_epochs: -1
-    precision: 16
     strategy: fsdp
