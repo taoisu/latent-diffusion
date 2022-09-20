@@ -325,11 +325,13 @@ class SpatialTransformer(nn.Module):
         depth:int=1,
         dropout:float=0.,
         context_dim:int=None,
-        checkpoint:str=None
+        checkpoint:str=None,
+        skip_rescale:bool=False,
     ):
         super().__init__()
         self.in_channels = in_channels
         self.checkpoint = checkpoint
+        self.skip_rescale = skip_rescale
         inner_dim = n_heads * d_head
         self.norm = Normalize(in_channels)
 
@@ -377,4 +379,7 @@ class SpatialTransformer(nn.Module):
             x = block(x, context=context, context_mask=context_mask)
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w)
         x = self.proj_out(x)
-        return x + x_in
+        if self.skip_rescale:
+            return (x + x_in) / math.sqrt(2)
+        else:
+            return x + x_in

@@ -94,6 +94,7 @@ class DDPM(pl.LightningModule):
         cosine_s:float=8e-3,
         given_betas:List=None,
         original_elbo_weight:float=0.,
+        true_elbo_weight:float=0.001,
         v_posterior:float=0.,  # weight for choosing posterior variance as sigma = (1-v) * beta_tilde + v * beta
         l_simple_weight:float=1.,
         conditioning_key:str=None,
@@ -130,6 +131,7 @@ class DDPM(pl.LightningModule):
         assert v_posterior == 0, 'please use var_parameterization instead'
         self.v_posterior = v_posterior
         self.original_elbo_weight = original_elbo_weight
+        self.true_elbo_weight = true_elbo_weight
         self.l_simple_weight = l_simple_weight
 
         if monitor is not None:
@@ -257,75 +259,6 @@ class DDPM(pl.LightningModule):
             strict = False
         return super().load_state_dict(state_dict=state_dict, strict=strict)
 
-    def normal_kl(self, lmean:Tensor, llogvar:Tensor, rmean:Tensor, rlogvar:Tensor):
-        '''
-        Compute the KL divergence between two gaussians. Shapes are automatically
-        broadcasted, so batches can be compared to scalars, among other use cases.
-        '''
-        return 0.5 * (
-            -1.0
-            + rlogvar
-            - llogvar
-            + torch.exp(llogvar - rlogvar)
-            + ((lmean - rmean)**2)*torch.exp(-rlogvar)
-        )
-
-    def approx_standard_normal_cdf(self, x:Tensor):
-        '''
-        A fast approximation of the cumulative distribution function of the standard normal.
-        '''
-        return 0.5 * (1.0 + torch.tanh(np.sqrt(2.0 / np.pi) * (x + 0.044715 * torch.pow(x, 3))))
-
-    def discretized_gaussian_log_likelihood(self, x:Tensor, *, means:Tensor, log_scales:Tensor):
-        '''
-        Compute the log-likelihood of a Gaussian distribution discretizing to a given image.
-        :param x: the target images. Assume the image was uint8 rescaled to range [-1, 1]
-        :param means:the Gaussian mean
-        :param log_scales: the Gaussian log stddev Tensor
-        :return: a tensor-like x of log probabilities (in nats)
-        '''
-        assert x.shape == means.shape == log_scales.shape
-        centered_x = x - means
-        inv_stdv = torch.exp(-log_scales)
-        plus_in = inv_stdv * (centered_x + 1.0 / 255.0)
-        cdf_plus = self.approx_standard_normal_cdf(plus_in)
-        min_in = inv_stdv * (centered_x - 1.0 / 255.0)
-        cdf_min = self.approx_standard_normal_cdf(min_in)
-        log_cdf_plus = torch.log(cdf_plus.clamp(min=1e-12))
-        log_one_minus_cdf_min = torch.log((1.0 - cdf_min).clamp(min=1e-12))
-        cdf_delta = cdf_plus - cdf_min
-        log_probs = torch.where(
-            x < -0.999,
-            log_cdf_plus,
-            torch.where(x > 0.999, log_one_minus_cdf_min, torch.log(cdf_delta.clamp(min=1e-12))),
-        )
-        assert log_probs.shape == x.shape
-        return log_probs
-
-    def vb_terms_bpd(self, x_start:Tensor, x_t:Tensor, t:Tensor, mask:Tensor=None, clip_denoised:bool=True, model_fn:Callable=None):
-        '''
-        Get a term for the variational lower-bound.
-        :param x_start: the [N x C x ...] tensor of noiseless inputs.
-        :param x_t: [N x C x ...] tensor of noised inputs.
-        :param clip_denoised: clip predicted x0 to the range [-1, 1]
-        :return vlbs
-        '''
-        def mean_flat(tsr:Tensor):
-            return tsr.mean(dim=list(range(1,len(tsr.shape))))
-
-        if mask is None:
-            mask = torch.ones_like(x_start)
-
-        true_mean, _, true_log_variance_clipped = self.q_posterior(x_start, x_t, t)
-        mean, _, log_variance = self.p_mean_variance(x_t, t, clip_denoised, model_fn)
-        kl = self.normal_kl(true_mean, true_log_variance_clipped, mean, log_variance) * mask
-        kl = mean_flat(kl) / np.log(2.0)
-        decoder_nll = -self.discretized_gaussian_log_likelihood(x_start, means=mean, log_scales=0.5*log_variance) * mask
-        assert decoder_nll.shape == x_start.shape
-        decoder_nll = mean_flat(decoder_nll) / np.log(2.0)
-        vlbs = torch.where(t == 0, decoder_nll, kl)
-        return vlbs
-
     def compute_var_from_range(self, model_var_out:Tensor, t:Tensor):
         shape = model_var_out.shape
         min_log = extract_into_tensor(self.posterior_log_variance_clipped, t, shape)
@@ -352,6 +285,11 @@ class DDPM(pl.LightningModule):
         sqrt_recipm1_alphas_cumprod_t = extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
         return sqrt_recip_alphas_cumprod_t * x_t - sqrt_recipm1_alphas_cumprod_t * noise
 
+    def noise_from_predict_start(self, x_t:Tensor, t:Tensor, x_0:Tensor):
+        sqrt_recip_alphas_cumprod_t = extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape)
+        sqrt_recipm1_alphas_cumprod_t = extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+        return (sqrt_recip_alphas_cumprod_t * x_t - x_0) / sqrt_recipm1_alphas_cumprod_t
+
     def q_posterior(self, x_start:Tensor, x_t:Tensor, t:Tensor):
         posterior_mean_coef1_t = extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape)
         posterior_mean_coef2_t = extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape)
@@ -369,9 +307,9 @@ class DDPM(pl.LightningModule):
         :return a tuple of mean, variance, log_variance
         '''
         model_out = self.model(x, t) if model_fn is not None else model_fn(x, t)
-        c = x.shape[1]
-        if model_out.shape[1] == c * 2:
-            model_mean_out, model_var_out = torch.split(model_out, c, dim=1)
+        ch = x.shape[1]
+        if model_out.shape[1] == ch * 2:
+            model_mean_out, model_var_out = torch.split(model_out, ch, dim=1)
         else:
             model_mean_out, model_var_out = model_out, None
 
@@ -389,7 +327,7 @@ class DDPM(pl.LightningModule):
             variance = torch.cat(self.posterior_variance[1], self.betas[1:])
             log_variance = torch.log(variance)
         elif self.var_parameterization == 'learned_range':
-            variance, log_variance = self.compute_var_from_range(model_var_out)
+            variance, log_variance = self.compute_var_from_range(model_var_out, t)
         else:
             raise ValueError(f'Unknown var_parameterization: {self.var_parameterization}')
         return model_mean, variance, log_variance
@@ -454,9 +392,9 @@ class DDPM(pl.LightningModule):
         noise = default(noise, lambda: torch.randn_like(x_start))
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         model_out = self.model(x_noisy, t)
-        c = x_start.shape[1]
-        if model_out.shape[1] == c * 2:
-            model_mean_out, model_var_out = torch.split(model_out, c, dim=1)
+        ch = x_start.shape[1]
+        if model_out.shape[1] == ch * 2:
+            model_mean_out, model_var_out = torch.split(model_out, ch, dim=1)
         else:
             model_mean_out, model_var_out = model_out, None
 
@@ -483,12 +421,13 @@ class DDPM(pl.LightningModule):
         if self.var_parameterization == 'learned_range':
             frozen_out = torch.cat([model_mean_out.detach(), model_var_out], dim=1)
             loss_true_vlb = self.vb_terms_bpd(
-                model_fn=lambda *args, r=frozen_out: r,
+                model_fn=lambda *args, r=frozen_out, **kwargs: r,
                 x_start=x_start,
                 x_t=x_noisy,
                 t=t,
                 clip_denoised=False,
             )
+            loss_true_vlb = loss_true_vlb.mean() * self.true_elbo_weight
             loss_dict.update({f'{log_prefix}/loss_true_vlb': loss_true_vlb})
             loss = loss + loss_true_vlb
 
@@ -1322,13 +1261,88 @@ class LatentDiffusion(DDPM):
         else:
             return torch.ones_like(x_start, dtype=x_start.dtype)
 
+    def normal_kl(self, lmean:Tensor, llogvar:Tensor, rmean:Tensor, rlogvar:Tensor):
+        '''
+        Compute the KL divergence between two gaussians. Shapes are automatically
+        broadcasted, so batches can be compared to scalars, among other use cases.
+        '''
+        return 0.5 * (
+            -1.0
+            + rlogvar
+            - llogvar
+            + torch.exp(llogvar - rlogvar)
+            + ((lmean - rmean)**2)*torch.exp(-rlogvar)
+        )
+
+    def approx_standard_normal_cdf(self, x:Tensor):
+        '''
+        A fast approximation of the cumulative distribution function of the standard normal.
+        '''
+        return 0.5 * (1.0 + torch.tanh(np.sqrt(2.0 / np.pi) * (x + 0.044715 * torch.pow(x, 3))))
+
+    def discretized_gaussian_log_likelihood(self, x:Tensor, *, means:Tensor, log_scales:Tensor):
+        '''
+        Compute the log-likelihood of a Gaussian distribution discretizing to a given image.
+        :param x: the target images. Assume the image was uint8 rescaled to range [-1, 1]
+        :param means:the Gaussian mean
+        :param log_scales: the Gaussian log stddev Tensor
+        :return: a tensor-like x of log probabilities (in nats)
+        '''
+        assert x.shape == means.shape == log_scales.shape
+        centered_x = x - means
+        inv_stdv = torch.exp(-log_scales)
+        plus_in = inv_stdv * (centered_x + 1.0 / 255.0)
+        cdf_plus = self.approx_standard_normal_cdf(plus_in)
+        min_in = inv_stdv * (centered_x - 1.0 / 255.0)
+        cdf_min = self.approx_standard_normal_cdf(min_in)
+        log_cdf_plus = torch.log(cdf_plus.clamp(min=1e-12))
+        log_one_minus_cdf_min = torch.log((1.0 - cdf_min).clamp(min=1e-12))
+        cdf_delta = cdf_plus - cdf_min
+        log_probs = torch.where(
+            x < -0.999,
+            log_cdf_plus,
+            torch.where(x > 0.999, log_one_minus_cdf_min, torch.log(cdf_delta.clamp(min=1e-12))),
+        )
+        assert log_probs.shape == x.shape
+        return log_probs
+
+    def vb_terms_bpd(self, x_start:Tensor, x_t:Tensor, cond:Tensor, t:Tensor, mask:Tensor=None, clip_denoised:bool=True, model_fn:Callable=None):
+        '''
+        Get a term for the variational lower-bound.
+        :param x_start: the [N x C x ...] tensor of noiseless inputs.
+        :param x_t: [N x C x ...] tensor of noised inputs.
+        :param clip_denoised: clip predicted x0 to the range [-1, 1]
+        :return vlbs
+        '''
+        def mean_flat(tsr:Tensor):
+            return tsr.mean(dim=list(range(1,len(tsr.shape))))
+
+        if mask is None:
+            mask = torch.ones_like(x_start)
+
+        true_mean, _, true_log_variance_clipped = self.q_posterior(x_start, x_t, t)
+        mean, _, log_variance = self.p_mean_variance(
+            x=x_t,
+            c=cond,
+            t=t,
+            clip_denoised=clip_denoised,
+            model_fn=model_fn,
+        )
+        kl = self.normal_kl(true_mean, true_log_variance_clipped, mean, log_variance) * mask
+        kl = mean_flat(kl) / np.log(2.0)
+        decoder_nll = -self.discretized_gaussian_log_likelihood(x_start, means=mean, log_scales=0.5*log_variance) * mask
+        assert decoder_nll.shape == x_start.shape
+        decoder_nll = mean_flat(decoder_nll) / np.log(2.0)
+        vlbs = torch.where(t == 0, decoder_nll, kl)
+        return vlbs
+
     def p_losses(self, x_start:Tensor, cond:Union[Tensor,Dict], t:Tensor, noise:Tensor=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         model_output = self.apply_model(x_noisy, t, cond)
-        c = x_start.shape[1]
-        if model_output.shape[1] == c * 2:
-            model_mean_out, model_var_out = torch.split(model_output, c, dim=1)
+        ch = x_start.shape[1]
+        if model_output.shape[1] == ch * 2:
+            model_mean_out, model_var_out = torch.split(model_output, ch, dim=1)
         else:
             model_mean_out, model_var_out = model_output, None
 
@@ -1364,12 +1378,14 @@ class LatentDiffusion(DDPM):
         if self.var_parameterization == 'learned_range':
             frozen_out = torch.cat([model_mean_out.detach(), model_var_out], dim=1)
             loss_true_vlb = self.vb_terms_bpd(
-                model_fn=lambda *args, r=frozen_out: r,
+                model_fn=lambda *args, r=frozen_out, **kwargs: r,
                 x_start=x_start,
                 x_t=x_noisy,
                 t=t,
+                cond=cond,
                 clip_denoised=False,
             )
+            loss_true_vlb = loss_true_vlb.mean() * self.true_elbo_weight
             loss_dict.update({f'{prefix}/loss_true_vlb': loss_true_vlb})
             loss = loss + loss_true_vlb
         loss_dict.update({f'{prefix}/loss': loss})
@@ -1387,11 +1403,17 @@ class LatentDiffusion(DDPM):
         return_x0:bool=False,
         score_corrector:Any=None,
         corrector_kwargs:Dict=None,
+        model_fn:Callable=None,
     ):
         t_in = t
-        model_out = self.apply_model(x, t_in, c, return_ids=return_codebook_ids)
-        if model_out.shape[1] == c * 2:
-            model_mean_out, model_var_out = torch.split(model_out, c, dim=1)
+        if model_fn is None:
+            model_out = self.apply_model(x, t_in, c, return_ids=return_codebook_ids)
+        else:
+            model_out = model_fn(x, t_in, c, return_ids=return_codebook_ids)
+
+        ch = x.shape[1]
+        if model_out.shape[1] == ch * 2:
+            model_mean_out, model_var_out = torch.split(model_out, ch, dim=1)
         else:
             model_mean_out, model_var_out = model_out, None
 
@@ -1413,15 +1435,15 @@ class LatentDiffusion(DDPM):
             x_recon.clamp_(-1., 1.)
         if quantize_denoised:
             x_recon, _, [_, _, indices] = self.first_stage_model.quantize(x_recon)
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
 
+        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
         if self.var_parameterization == 'fixed_small':
             variance, log_variance = posterior_variance, posterior_log_variance
         elif self.var_parameterization == 'fixed_large':
             variance = torch.cat(self.posterior_variance[1], self.betas[1:])
             log_variance = torch.log(variance)
         elif self.var_parameterization == 'learned_range':
-            variance, log_variance = self.compute_var_from_range(model_var_out)
+            variance, log_variance = self.compute_var_from_range(model_var_out, t)
         else:
             raise ValueError(f'Unknown var_parameterization: {self.var_parameterization}')
 

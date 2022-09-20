@@ -256,7 +256,7 @@ class DDIMSampler(object):
         b, *_, device = *x.shape, x.device
 
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
-            e_t = self.model.apply_model(x, t, c)
+            model_out = self.model.apply_model(x, t, c)
         else:
             x_in = torch.cat([x] * 2)
             t_in = torch.cat([t] * 2)
@@ -272,8 +272,19 @@ class DDIMSampler(object):
                         c_in[key] = torch.cat([uc[key], c[key]])
             else:
                 c_in = torch.cat([unconditional_conditioning, c])
-            e_t_uncond, e_t = self.model.apply_model(x_in, t_in, c_in).chunk(2)
-            e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+            model_out_uncond, model_out = self.model.apply_model(x_in, t_in, c_in).chunk(2)
+            model_out = model_out_uncond + unconditional_guidance_scale * (model_out - model_out_uncond)
+
+        if self.model.var_parameterization == 'learned_range':
+            ch = x.shape[1]
+            model_mean_out, _ = torch.split(model_out, ch, dim=1)
+        else:
+            model_mean_out = model_out
+
+        if self.model.mean_parameterization == 'eps':
+            e_t = model_mean_out
+        elif self.model.mean_parameterization == 'x0':
+            e_t = self.model.noise_from_predict_start(x, t, model_mean_out)
 
         if score_corrector is not None:
             assert self.model.mean_parameterization == "eps"

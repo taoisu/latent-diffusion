@@ -156,6 +156,7 @@ class EfficientUNetModel(nn.Module):
                 depth=transformer_depth,
                 context_dim=context_dim,
                 checkpoint=checkpoint,
+                skip_rescale=skip_rescale,
             ) if use_spatial_transformer else AttentionBlock(
                 out_ch,
                 checkpoint=checkpoint,
@@ -268,6 +269,7 @@ class EfficientUNetModel(nn.Module):
                         depth=transformer_depth,
                         context_dim=context_dim,
                         checkpoint=checkpoint,
+                        skip_rescale=skip_rescale,
                     ))
                 else:
                     layers.append(AttentionBlock(
@@ -371,6 +373,7 @@ class EfficientUNetModel(nn.Module):
                         depth=transformer_depth,
                         context_dim=context_dim,
                         checkpoint=checkpoint,
+                        skip_rescale=skip_rescale,
                     ))
                 else:
                     layers.append(AttentionBlock(
