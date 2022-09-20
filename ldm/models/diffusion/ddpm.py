@@ -302,7 +302,7 @@ class DDPM(pl.LightningModule):
         assert log_probs.shape == x.shape
         return log_probs
 
-    def vb_terms_bpd(self, x_start:Tensor, x_t:Tensor, t:Tensor, clip_denoised:bool=True, model_fn:Callable=None):
+    def vb_terms_bpd(self, x_start:Tensor, x_t:Tensor, t:Tensor, mask:Tensor=None, clip_denoised:bool=True, model_fn:Callable=None):
         '''
         Get a term for the variational lower-bound.
         :param x_start: the [N x C x ...] tensor of noiseless inputs.
@@ -313,11 +313,14 @@ class DDPM(pl.LightningModule):
         def mean_flat(tsr:Tensor):
             return tsr.mean(dim=list(range(1,len(tsr.shape))))
 
+        if mask is None:
+            mask = torch.ones_like(x_start)
+
         true_mean, _, true_log_variance_clipped = self.q_posterior(x_start, x_t, t)
         mean, _, log_variance = self.p_mean_variance(x_t, t, clip_denoised, model_fn)
-        kl = self.normal_kl(true_mean, true_log_variance_clipped, mean, log_variance)
+        kl = self.normal_kl(true_mean, true_log_variance_clipped, mean, log_variance) * mask
         kl = mean_flat(kl) / np.log(2.0)
-        decoder_nll = -self.discretized_gaussian_log_likelihood(x_start, means=mean, log_scales=0.5*log_variance)
+        decoder_nll = -self.discretized_gaussian_log_likelihood(x_start, means=mean, log_scales=0.5*log_variance) * mask
         assert decoder_nll.shape == x_start.shape
         decoder_nll = mean_flat(decoder_nll) / np.log(2.0)
         vlbs = torch.where(t == 0, decoder_nll, kl)
@@ -429,7 +432,10 @@ class DDPM(pl.LightningModule):
         sqrt_one_minus_alphas_cumprod_t = extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape)
         return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
 
-    def get_loss(self, pred:Tensor, target:Tensor, mean:bool=True):
+    def get_loss(self, pred:Tensor, target:Tensor, mask:Tensor=None, mean:bool=True):
+        if mask is None:
+            mask = torch.ones_like(pred)
+        target, pred = target * mask, pred * mask
         if self.loss_type == 'l1':
             loss = (target - pred).abs()
             if mean:
@@ -1320,6 +1326,11 @@ class LatentDiffusion(DDPM):
         noise = default(noise, lambda: torch.randn_like(x_start))
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         model_output = self.apply_model(x_noisy, t, cond)
+        c = x_start.shape[1]
+        if model_output.shape[1] == c * 2:
+            model_mean_out, model_var_out = torch.split(model_output, c, dim=1)
+        else:
+            model_mean_out, model_var_out = model_output, None
 
         loss_dict={}
         prefix = 'train' if self.training else 'val'
@@ -1332,10 +1343,7 @@ class LatentDiffusion(DDPM):
             raise NotImplementedError()
 
         mask = self.get_loss_mask(x_start, cond)
-        model_output = mask * model_output
-        target = mask * target
-
-        loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
+        loss_simple = self.get_loss(model_mean_out, target, mask=mask, mean=False).mean([1, 2, 3])
         loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})
 
         logvar_t = self.logvar[t].to(self.device)
@@ -1347,10 +1355,23 @@ class LatentDiffusion(DDPM):
 
         loss = self.l_simple_weight * loss.mean()
 
-        loss_vlb = self.get_loss(model_output, target, mean=False).mean(dim=(1, 2, 3))
-        loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
-        loss_dict.update({f'{prefix}/loss_vlb': loss_vlb})
-        loss += (self.original_elbo_weight * loss_vlb)
+        if self.original_elbo_weight > 0:
+            loss_vlb = self.get_loss(model_mean_out, target, mask=mask, mean=False).mean(dim=(1, 2, 3))
+            loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
+            loss_dict.update({f'{prefix}/loss_vlb': loss_vlb})
+            loss += (self.original_elbo_weight * loss_vlb)
+
+        if self.var_parameterization == 'learned_range':
+            frozen_out = torch.cat([model_mean_out.detach(), model_var_out], dim=1)
+            loss_true_vlb = self.vb_terms_bpd(
+                model_fn=lambda *args, r=frozen_out: r,
+                x_start=x_start,
+                x_t=x_noisy,
+                t=t,
+                clip_denoised=False,
+            )
+            loss_dict.update({f'{prefix}/loss_true_vlb': loss_true_vlb})
+            loss = loss + loss_true_vlb
         loss_dict.update({f'{prefix}/loss': loss})
 
         return loss, loss_dict
@@ -1369,18 +1390,22 @@ class LatentDiffusion(DDPM):
     ):
         t_in = t
         model_out = self.apply_model(x, t_in, c, return_ids=return_codebook_ids)
+        if model_out.shape[1] == c * 2:
+            model_mean_out, model_var_out = torch.split(model_out, c, dim=1)
+        else:
+            model_mean_out, model_var_out = model_out, None
 
         if score_corrector is not None:
             assert self.mean_parameterization == "eps"
-            model_out = score_corrector.modify_score(self, model_out, x, t, c, **corrector_kwargs)
+            model_mean_out = score_corrector.modify_score(self, model_mean_out, x, t, c, **corrector_kwargs)
 
         if return_codebook_ids:
-            model_out, logits = model_out
+            model_mean_out, logits = model_mean_out
 
         if self.mean_parameterization == "eps":
-            x_recon = self.predict_start_from_noise(x, t=t, noise=model_out)
+            x_recon = self.predict_start_from_noise(x, t=t, noise=model_mean_out)
         elif self.mean_parameterization == "x0":
-            x_recon = model_out
+            x_recon = model_mean_out
         else:
             raise NotImplementedError()
 
@@ -1389,12 +1414,23 @@ class LatentDiffusion(DDPM):
         if quantize_denoised:
             x_recon, _, [_, _, indices] = self.first_stage_model.quantize(x_recon)
         model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
-        if return_codebook_ids:
-            return model_mean, posterior_variance, posterior_log_variance, logits
-        elif return_x0:
-            return model_mean, posterior_variance, posterior_log_variance, x_recon
+
+        if self.var_parameterization == 'fixed_small':
+            variance, log_variance = posterior_variance, posterior_log_variance
+        elif self.var_parameterization == 'fixed_large':
+            variance = torch.cat(self.posterior_variance[1], self.betas[1:])
+            log_variance = torch.log(variance)
+        elif self.var_parameterization == 'learned_range':
+            variance, log_variance = self.compute_var_from_range(model_var_out)
         else:
-            return model_mean, posterior_variance, posterior_log_variance
+            raise ValueError(f'Unknown var_parameterization: {self.var_parameterization}')
+
+        if return_codebook_ids:
+            return model_mean, variance, log_variance, logits
+        elif return_x0:
+            return model_mean, variance, log_variance, x_recon
+        else:
+            return model_mean, variance, log_variance
 
     @torch.no_grad()
     def p_sample(
