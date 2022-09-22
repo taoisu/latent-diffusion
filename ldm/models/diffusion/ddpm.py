@@ -1404,18 +1404,43 @@ class LatentDiffusion(DDPM):
         score_corrector:Any=None,
         corrector_kwargs:Dict=None,
         model_fn:Callable=None,
+        unconditional_guidance_scale:float=1.,
+        unconditional_conditioning:Union[Tensor,Dict]=None,
     ):
-        t_in = t
+        use_cfg = not (unconditional_conditioning is None or unconditional_guidance_scale == 1.)
         if model_fn is None:
-            model_out = self.apply_model(x, t_in, c, return_ids=return_codebook_ids)
+            if not use_cfg:
+                model_out = self.apply_model(x, t, c, return_ids=return_codebook_ids)
+            else:
+                x_in, t_in = torch.cat([x] * 2), torch.cat([t] * 2)
+                if isinstance(c, Dict):
+                    assert unconditional_conditioning.keys() == c.keys()
+                    uc = unconditional_conditioning
+                    keys = list(c.keys())
+                    c_in = {}
+                    for key in keys:
+                        if isinstance(c[key], str):
+                            c_in[key] = c[key]
+                        else:
+                            c_in[key] = torch.cat([uc[key], c[key]])
+                else:
+                    c_in = torch.cat([unconditional_conditioning, c])
+                model_out_uncond, model_out = self.apply_model(x_in, t_in, c_in, return_ids=return_codebook_ids).chunk(2)
         else:
-            model_out = model_fn(x, t_in, c, return_ids=return_codebook_ids)
+            assert not use_cfg
+            model_out = model_fn(x, t, c, return_ids=return_codebook_ids)
 
         ch = x.shape[1]
         if model_out.shape[1] == ch * 2:
             model_mean_out, model_var_out = torch.split(model_out, ch, dim=1)
         else:
             model_mean_out, model_var_out = model_out, None
+
+        if use_cfg:
+            if model_mean_out.shape[1] == ch * 2:
+                model_mean_out_uncond, model_var_out_uncond = torch.split(model_out_uncond, ch, dim=1)
+            else:
+                model_mean_out_uncond, model_var_out_uncond = model_out_uncond, None
 
         if score_corrector is not None:
             assert self.mean_parameterization == "eps"
@@ -1425,9 +1450,19 @@ class LatentDiffusion(DDPM):
             model_mean_out, logits = model_mean_out
 
         if self.mean_parameterization == "eps":
-            x_recon = self.predict_start_from_noise(x, t=t, noise=model_mean_out)
+            if not use_cfg:
+                x_recon = self.predict_start_from_noise(x, t=t, noise=model_mean_out)
+            else:
+                e = model_mean_out_uncond + unconditional_guidance_scale * (model_mean_out - model_mean_out_uncond)
+                x_recon = self.predict_start_from_noise(x, t=t, noise=e)
         elif self.mean_parameterization == "x0":
-            x_recon = model_mean_out
+            if not use_cfg:
+                x_recon = model_mean_out
+            else:
+                e_t = self.noise_from_predict_start(x, t, model_mean_out)
+                e_t_uncond = self.noise_from_predict_start(x, t, model_mean_out_uncond)
+                e = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+                x_recon = self.predict_start_from_noise(x, t=t, noise=e)
         else:
             raise NotImplementedError()
 
@@ -1469,8 +1504,11 @@ class LatentDiffusion(DDPM):
         noise_dropout:float=0.,
         score_corrector:Any=None,
         corrector_kwargs:Dict=None,
+        unconditional_guidance_scale:float=1.,
+        unconditional_conditioning:Union[Tensor,Dict]=None,
     ):
         b, *_, device = *x.shape, x.device
+
         outputs = self.p_mean_variance(
             x=x,
             c=c,
@@ -1480,10 +1518,14 @@ class LatentDiffusion(DDPM):
             quantize_denoised=quantize_denoised,
             return_x0=return_x0,
             score_corrector=score_corrector,
-            corrector_kwargs=corrector_kwargs)
+            corrector_kwargs=corrector_kwargs,
+            unconditional_guidance_scale=unconditional_guidance_scale,
+            unconditional_conditioning=unconditional_conditioning)
+
         if return_codebook_ids:
             raise DeprecationWarning("Support dropped.")
             model_mean, _, model_log_variance, logits = outputs
+
         elif return_x0:
             model_mean, _, model_log_variance, x0 = outputs
         else:
@@ -1582,11 +1624,25 @@ class LatentDiffusion(DDPM):
         return img, intermediates
 
     @torch.no_grad()
-    def p_sample_loop(self, cond, shape, return_intermediates=False,
-                      x_T=None, verbose=True, callback=None, timesteps=None, quantize_denoised=False,
-                      mask=None, x0=None, img_callback=None, start_T=None,
-                      log_every_t=None):
-
+    def p_sample_loop(
+        self,
+        cond:Dict,
+        shape:Tensor,
+        return_intermediates:bool=False,
+        x_T:Tensor=None,
+        verbose:bool=True,
+        callback:Callable=None,
+        timesteps:int=None,
+        quantize_denoised:bool=False,
+        mask:Tensor=None,
+        x0:Tensor=None,
+        img_callback:Callable=None,
+        start_T:int=None,
+        log_every_t:int=None,
+        unconditional_guidance_scale:float=1.,
+        unconditional_conditioning:Tensor=None,
+        dynamic_thresholding:float=None,
+    ):
         if not log_every_t:
             log_every_t = self.log_every_t
         device = self.betas.device
@@ -1616,16 +1672,24 @@ class LatentDiffusion(DDPM):
                 tc = self.cond_ids[ts].to(cond.device)
                 cond = self.q_sample(x_start=cond, t=tc, noise=torch.randn_like(cond))
 
-            img = self.p_sample(img, cond, ts,
-                                clip_denoised=self.clip_denoised,
-                                quantize_denoised=quantize_denoised)
+            img = self.p_sample(
+                img,
+                cond,
+                ts,
+                clip_denoised=self.clip_denoised,
+                quantize_denoised=quantize_denoised,
+                unconditional_guidance_scale=unconditional_guidance_scale,
+                unconditional_conditioning=unconditional_conditioning,)
+
             if mask is not None:
                 img_orig = self.q_sample(x0, ts)
                 img = img_orig * mask + (1. - mask) * img
 
             if i % log_every_t == 0 or i == timesteps - 1:
                 intermediates.append(img)
+
             if callback: callback(i)
+
             if img_callback: img_callback(img, i)
 
         if return_intermediates:
@@ -1633,9 +1697,23 @@ class LatentDiffusion(DDPM):
         return img
 
     @torch.no_grad()
-    def sample(self, cond, batch_size=16, return_intermediates=False, x_T=None,
-               verbose=True, timesteps=None, quantize_denoised=False,
-               mask=None, x0=None, shape=None,**kwargs):
+    def sample(
+        self,
+        cond:Dict,
+        batch_size:int=16,
+        return_intermediates:bool=False,
+        x_T:Tensor=None,
+        verbose:bool=True,
+        timesteps:int=None,
+        quantize_denoised:bool=False,
+        mask:Tensor=None,
+        x0:Tensor=None,
+        shape:Tensor=None,
+        unconditional_guidance_scale:float=1.,
+        unconditional_conditioning:Tensor=None,
+        dynamic_thresholding:float=None,
+        **kwargs
+    ):
         if shape is None:
             shape = (batch_size, self.channels, self.image_size, self.image_size)
         if cond is not None:
@@ -1644,11 +1722,19 @@ class LatentDiffusion(DDPM):
                 list(map(lambda x: x[:batch_size], cond[key])) for key in cond}
             else:
                 cond = [c[:batch_size] for c in cond] if isinstance(cond, list) else cond[:batch_size]
-        return self.p_sample_loop(cond,
-                                  shape,
-                                  return_intermediates=return_intermediates, x_T=x_T,
-                                  verbose=verbose, timesteps=timesteps, quantize_denoised=quantize_denoised,
-                                  mask=mask, x0=x0)
+        return self.p_sample_loop(
+            cond,
+            shape,
+            return_intermediates=return_intermediates,
+            x_T=x_T,
+            verbose=verbose,
+            timesteps=timesteps,
+            quantize_denoised=quantize_denoised,
+            mask=mask,
+            x0=x0,
+            unconditional_guidance_scale=unconditional_guidance_scale,
+            unconditional_conditioning=unconditional_conditioning,
+            dynamic_thresholding=dynamic_thresholding)
 
     @torch.no_grad()
     def sample_log(
