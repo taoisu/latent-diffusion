@@ -368,16 +368,17 @@ class FrozenPretrainedImageEmbedder(AbstractEncoder):
 
     def encode(self, cond:Dict):
         imgs_tsr, cc_imgs_tsr = self.prep_text_cond(cond)
+        mask_tsr = rearrange(cond['mask'], 'b h w c -> b c h w')
         outputs = self.model(imgs_tsr)
         ret = OrderedDict()
         if self.with_concat:
-            ret.update({ 'c_concat': cc_imgs_tsr })
+            ret.update({ 'c_concat': torch.cat([cc_imgs_tsr, (mask_tsr*2-1)], dim=1) })
         if self.with_emb:
             ret.update({ 'c_emb': outputs.pooler_output })
         if self.with_crossattn:
             ret.update({ 'c_crossattn': outputs.last_hidden_state })
         if self.with_mask:
-            ret.update({ 'c_mask': rearrange(cond['mask'], 'b h w c -> b c h w') })
+            ret.update({ 'c_mask': mask_tsr })
         ret.update({ 'c_name': 'txtimg' })
         return ret
 

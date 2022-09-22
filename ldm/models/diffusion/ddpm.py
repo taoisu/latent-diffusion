@@ -255,7 +255,7 @@ class DDPM(pl.LightningModule):
             print(f"Unexpected Keys: {unexpected}")
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
-        if isinstance(self.cond_stage_model, (FrozenPretrainedTextEmbedder,)):
+        if isinstance(self.cond_stage_model, (FrozenPretrainedTextEmbedder,FrozenPretrainedImageEmbedder)):
             strict = False
         return super().load_state_dict(state_dict=state_dict, strict=strict)
 
@@ -1828,7 +1828,9 @@ class LatentDiffusion(DDPM):
         )
         if isinstance(self.cond_stage_model, classes):
             if 'c_concat' in c:
-                log['concat'] = c['c_concat']
+                cc_tsr = c['c_concat']
+                cc_tsr = cc_tsr if cc_tsr.shape[1] != 2 else cc_tsr[:,:1,...]
+                log['concat'] = cc_tsr
             mask = 1 - rearrange(batch['mask'][:N], 'b h w c -> b c h w')
             log["mask"] = mask.clone()*2-1
             # inpaint w/ mask
@@ -1862,6 +1864,20 @@ class LatentDiffusion(DDPM):
                         unconditional_conditioning=uncond_c)
                 x_samples = self.decode_first_stage(samples.to(self.device))
                 log["samples_text_inpaint_cf_guide_2.0"] = x_samples
+
+                with self.ema_scope("Poltting Inpaint w/ classifier free guidence 5.0"):
+                    samples, _ = self.sample_log(
+                        cond=c,
+                        batch_size=N,
+                        ddim=use_ddim,
+                        eta=ddim_eta,
+                        ddim_steps=ddim_steps,
+                        x0=z[:N],
+                        mask=mask,
+                        unconditional_guidance_scale=5.0,
+                        unconditional_conditioning=uncond_c)
+                x_samples = self.decode_first_stage(samples.to(self.device))
+                log["samples_text_inpaint_cf_guide_5.0"] = x_samples
 
         if plot_diffusion_rows:
             # get diffusion row
