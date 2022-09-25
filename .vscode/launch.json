@@ -66,11 +66,11 @@
             "program": "ldm/data/avid.py",
             "args": [
                 "--mode",
-                "test_inpaint_img"
+                "test_inpaint_sw"
             ],
             "env": {
-                "AVID_ROOT_DIR": "/home/xiaguo/guided-diffusion/data",
-                "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/ldm/assets/FreeSerif.ttf"
+                "AVID_ROOT_DIR": "/datadisk",
+                "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/assets/FreeSerif.ttf"
             },
             "console": "integratedTerminal",
             "justMyCode": true
@@ -129,17 +129,43 @@
                 "--scale_lr",
                 "false",
                 "--base",
-                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-hgvitl16-224.yaml",
+                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-hgvitb16-224.yaml",
                 "--accelerator",
                 "gpu",
                 "--devices",
-                "0,1",
+                "0,",
+                "-t",
+                "-r",
+                "logs/2022-09-22T03-16-07_txtinpaintavid128_fsdp-fairscale-hgvitb16-224/checkpoints/last.ckpt"
+            ],
+            "env": {
+                "AVID_ROOT_DIR": "/datadisk",
+                "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/assets/FreeSerif.ttf",
+                "CUDA_LAUNCH_BLOCKING": "1",
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "main.py - train inpaint multimodal avid",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "args": [
+                "--scale_lr",
+                "false",
+                "--base",
+                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-hgvitl16-224-t5xl.yaml",
+                "--accelerator",
+                "gpu",
+                "--devices",
+                "0,",
                 "-t",
             ],
             "env": {
-                "AVID_ROOT_DIR": "/home/xiaguo/guided-diffusion/data",
+                "AVID_ROOT_DIR": "/datadisk",
                 "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/assets/FreeSerif.ttf",
                 "CUDA_LAUNCH_BLOCKING": "1",
+                "TOKENIZERS_PARALLELISM": "false"
             },
             "justMyCode": false
         },

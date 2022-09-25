@@ -269,8 +269,19 @@ class DDIMSampler(object):
                 for key in keys:
                     if isinstance(c[key], str):
                         c_in[key] = c[key]
-                    else:
+                    elif isinstance(c[key], Tensor):
                         c_in[key] = torch.cat([uc[key], c[key]])
+                    elif isinstance(c[key], list):
+                        c_in[key] = []
+                        for i, val in enumerate(c[key]):
+                            if isinstance(val, Tensor):
+                                c_in[key].append(torch.cat([uc[key][i], c[key][i]]))
+                            elif isinstance(val, str):
+                                c_in[key].append(val)
+                            else:
+                                raise ValueError()
+                    else:
+                        raise ValueError()
             else:
                 c_in = torch.cat([unconditional_conditioning, c])
             model_out_uncond, model_out = self.model.apply_model(x_in, t_in, c_in).chunk(2)

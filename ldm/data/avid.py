@@ -69,6 +69,49 @@ def get_bbox_info(bbox: List[float]):
     return h, w
 
 
+def render_text_in_rect(
+    rect_size:int,
+    pad:int,
+    text:str,
+    font:ImageFont.FreeTypeFont,
+):
+    if not text:
+        return np.ones((rect_size, rect_size, 1), dtype=np.float32)
+
+    image = Image.new('L', (rect_size, rect_size), 'white')
+    draw = ImageDraw.Draw(image)
+    merge_lines = lambda lines: '\n'.join([' '.join(line) for line in lines])
+    lines = [[]]
+    words = text.split()
+    longest_word = max(words, key=len)
+    xmin, ymin, xmax, ymax = draw.multiline_textbbox((pad, 0), longest_word, font=font)
+    if xmax > rect_size:
+        while xmax > rect_size:
+            font = ImageFont.truetype(font.path, font.size - 1)
+            xmin, ymin, xmax, ymax = draw.multiline_textbbox((pad, 0), longest_word, font=font)
+    for word in words:
+        lines[-1].append(word)
+        xmin, ymin, xmax, ymax = draw.multiline_textbbox((pad, 0), merge_lines(lines), font=font)
+        if xmax > rect_size:
+            lines.append([lines[-1].pop()])
+            xmin, ymin, xmax, ymax = draw.multiline_textbbox((pad, 0), merge_lines(lines), font=font)
+            if ymax > rect_size:
+                lines.pop()
+                lines[-1][-1] += '...'
+                while draw.multiline_textbbox((pad, 0), merge_lines(lines), font=font)[0] > rect_size:
+                    lines[-1].pop()
+                    if lines[-1]:
+                        lines[-1][-1] += '...'
+                    else:
+                        lines[-1].append('...')
+                break
+    text_multi_line = merge_lines(lines)
+    draw.multiline_text((pad, 0), text_multi_line, spacing=0, font=font)
+    img_tsr = np.array(image).astype(np.uint8)
+    img_tsr = (img_tsr/127.5-1.0).astype(np.float32)
+    return img_tsr[..., np.newaxis]
+
+
 class AvidInpaintSizeAware(Dataset):
 
     def __init__(
@@ -77,7 +120,11 @@ class AvidInpaintSizeAware(Dataset):
         names:List[str],
         min_font_size:int,
         max_font_size:int,
+        cond_size:int,
+        cond_font_size:int,
         pad:float=4,
+        dropout:float=0,
+        num_samples:int=0,
     ):
         '''
         Avid Inpaint Size Aware Dataset
@@ -90,11 +137,17 @@ class AvidInpaintSizeAware(Dataset):
         '''
         super().__init__()
         self.base = self.get_base(names)
+        if num_samples > 0:
+            self.base = self.base[:num_samples]
         self.size = size
+        self.cond_size = cond_size
         self.pad = pad
         self.min_font_size = min_font_size
         self.max_font_size = max_font_size
+        self.dropout = dropout
         self.img_rescler = al.SmallestMaxSize(max_size=size, interpolation=cv2.INTER_AREA)
+        font_path = os.environ['AVID_FONT_PATH']
+        self.font = ImageFont.truetype(font_path, cond_font_size)
 
     def __len__(self):
         return len(self.base)
@@ -114,7 +167,9 @@ class AvidInpaintSizeAware(Dataset):
             return {
                 'image': np.ones((self.size, self.size, 3), dtype=np.float32),
                 'mask': np.zeros((self.size, self.size, 1), dtype=np.float32),
+                'txt_image': np.ones((self.cond_size, self.cond_size, 1), dtype=np.float32),
                 'text': '',
+                'font_size': 0,
             }
 
         # pick anchor word
@@ -126,6 +181,8 @@ class AvidInpaintSizeAware(Dataset):
         scale = self.get_scale(h, w, max_size)
         line = self.merge_words(words, j, max_size / scale, offset2line)
         text, poly = line['content'], line['polygon']
+        if np.random.rand() < self.dropout:
+            text = ''
         bbox_w, bbox_h = max(poly[::2]) - min(poly[::2]), max(poly[1::2]) - min(poly[1::2])
         max_size_scl, pad_scl = max_size / scale, self.pad / scale
         offx = int(np.random.rand() * max(0, max_size_scl - bbox_w) + pad_scl)
@@ -148,15 +205,17 @@ class AvidInpaintSizeAware(Dataset):
                 mask = np.pad(mask, pad_with, 'constant', constant_values=0)
             out = self.img_rescler(image=crop, mask=mask)
             crop, mask = out['image'], (out['mask'] != 0).astype(np.float32)
+            txt_image = render_text_in_rect(self.cond_size, self.pad, text, self.font)
         except Exception as e:
             print(e)
             crop = np.ones((self.size, self.size, 3), dtype=np.uint8)*255
             mask = np.zeros((self.size, self.size, 1), dtype=np.float32)
-            mask[:8, :8] = 1
             text = ''
+            txt_image = np.ones((self.cond_size, self.cond_size, 1), dtype=np.float32),
         return {
             'image': (crop/127.5-1.0).astype(np.float32),
             'mask': mask,
+            'txt_image': txt_image,
             'text': text,
             'font_size': h * scale
         }
@@ -199,6 +258,8 @@ class AvidInpaintSizeAware(Dataset):
         min_font_size, max_font_size = self.min_font_size, self.max_font_size
         max_font_size = min(max_font_size, max_size / w * h)
         min_font_size = min(max_font_size, min_font_size)
+        if min_font_size <= h <= max_font_size:
+            return 1
         font_size = min_font_size + np.random.rand() * (max_font_size - min_font_size)
         scale = font_size / h
         return scale
@@ -583,6 +644,7 @@ def test_inpaint_dataset():
         mask = np.repeat(mask, 3, -1)
         Image.fromarray(mask).save('b.jpg')
 
+
 def test_inpaint_img_dataset():
     ds = AvidInpaintTxtImg(size=128, names=['Random'])
     for i in range(len(ds)):
@@ -590,12 +652,16 @@ def test_inpaint_img_dataset():
         print(example['text'])
         example['txt_image'].save('a.jpg')
 
+
 def test_inpaint_sw_dataset():
     ds = AvidInpaintSizeAware(
-        size=160,
+        size=128,
         names=['Random'],
-        min_font_size=11,
-        max_font_size=18)
+        min_font_size=10,
+        max_font_size=16,
+        cond_size=224,
+        cond_font_size=24,
+    )
     for i in tqdm(range(len(ds))):
         example = ds[i]
         image = ((example['image']+1)*127.5).astype(np.uint8)
@@ -603,6 +669,33 @@ def test_inpaint_sw_dataset():
         mask = ((example['mask'])*255).astype(np.uint8)
         mask = np.repeat(mask, 3, -1)
         Image.fromarray(mask).save('b.jpg')
+        txt_image = ((example['txt_image']+1)*127.5).astype(np.uint8)
+        Image.fromarray(txt_image).save('c.jpg')
+
+
+def clean_empty():
+    root_dir = Path(os.environ['AVID_ROOT_DIR'])
+    names = [path for path in root_dir.glob('*') if path.is_dir()]
+    for folder_name in names:
+        img_dir = root_dir / folder_name
+        flist_path = img_dir / 'flist_ocr.pkl'
+        if not flist_path.exists():
+            continue
+        with open(flist_path, 'rb') as f:
+            flist = pickle.load(f)
+        flist_new = []
+        print(f'{folder_name} - old len: {len(flist)}')
+        for ocr_name in tqdm(flist):
+            ocr_path = img_dir / ocr_name
+            with open(ocr_path, 'r', encoding='utf-8') as f:
+                ocr_data = json.load(f)
+            words = ocr_data['analyzeResult']['pages'][0]['words']
+            if len(words) == 0:
+                continue
+            flist_new.append(ocr_name)
+        print(f'{folder_name} - new len: {len(flist_new)}')
+        with open(flist_path, 'wb') as f:
+            pickle.dump(flist_new, f)
 
 
 def main(mode:str):
@@ -618,6 +711,8 @@ def main(mode:str):
         test_inpaint_img_dataset()
     elif mode == 'test_inpaint_sw':
         test_inpaint_sw_dataset()
+    elif mode == 'clean_empty':
+        clean_empty()
 
 
 if __name__ == '__main__':

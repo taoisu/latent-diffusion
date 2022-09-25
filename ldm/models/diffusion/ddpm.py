@@ -40,6 +40,7 @@ from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, T
 from ldm.modules.encoders.modules import (
     FrozenPretrainedTextEmbedder,
     FrozenTextInpaintEmbedder,
+    FrozenPretrainedMultiModalEmbedder,
     TextImageInpaintEmbedder,
     FrozenPretrainedImageEmbedder,
 )
@@ -867,6 +868,17 @@ class LatentDiffusion(DDPM):
 
         return fold, unfold, normalization, weighting
 
+    def get_partial_batch(self, x:Union[Tensor,Dict,List], bs:int):
+        if isinstance(x, Tensor):
+            return x[:bs]
+        elif isinstance(x, Dict):
+            for k in list(x.keys()):
+                x[k] = self.get_partial_batch(x[k], bs)
+        elif isinstance(x, List):
+            for i, _ in enumerate(x):
+                x[i] = self.get_partial_batch(x[i], bs)
+        return x
+
     @torch.no_grad()
     def get_input(
         self,
@@ -891,7 +903,7 @@ class LatentDiffusion(DDPM):
             if cond_key != self.first_stage_key:
                 if cond_key in ['caption', 'coordinates_bbox']:
                     xc = batch[cond_key]
-                elif cond_key in ['class_label', 'patch', 'text', 'txt_image']:
+                elif cond_key in ['class_label', 'patch', 'text', 'txt_image', 'multimodal']:
                     xc = batch
                 elif cond_key == 'lr_image':
                     xc = super().get_input(batch, cond_key).to(self.device)
@@ -909,12 +921,7 @@ class LatentDiffusion(DDPM):
             else:
                 c = xc
             if bs is not None:
-                if isinstance(c, Tensor):
-                    c = c[:bs]
-                elif isinstance(c, dict):
-                    for k in list(c.keys()):
-                        if isinstance(c[k], Tensor):
-                            c[k] = c[k][:bs]
+                c = self.get_partial_batch(c, bs)
 
             if self.use_positional_encodings:
                 pos_x, pos_y = self.compute_latent_shifts(batch)
@@ -1764,7 +1771,6 @@ class LatentDiffusion(DDPM):
 
         return samples, intermediates
 
-
     @torch.no_grad()
     def log_images(
         self,
@@ -1809,6 +1815,10 @@ class LatentDiffusion(DDPM):
                 log["conditioning"] = xc
                 xc = log_pil_as_img((x.shape[2], x.shape[3]), batch['txt_image'])
                 log["conditioning_rendered"] = xc
+            elif self.cond_stage_key == 'multimodal':
+                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch['text'])
+                log["conditioning_lang"] = xc
+                log["conditioning_vision"] = rearrange(batch["txt_image"], 'b h w c -> b c h w')
             elif self.cond_stage_key == 'class_label':
                 xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["human_label"])
                 log['conditioning'] = xc
@@ -1825,6 +1835,7 @@ class LatentDiffusion(DDPM):
             FrozenTextInpaintEmbedder,
             TextImageInpaintEmbedder,
             FrozenPretrainedImageEmbedder,
+            FrozenPretrainedMultiModalEmbedder,
         )
         if isinstance(self.cond_stage_model, classes):
             if 'c_concat' in c:
@@ -1846,11 +1857,21 @@ class LatentDiffusion(DDPM):
             x_samples = self.decode_first_stage(samples.to(self.device))
             log["samples_text_inpaint"] = x_samples
 
-            if isinstance(self.cond_stage_model, (TextImageInpaintEmbedder, FrozenPretrainedImageEmbedder)):
+            if isinstance(self.cond_stage_model, (TextImageInpaintEmbedder, FrozenPretrainedImageEmbedder, FrozenPretrainedMultiModalEmbedder)):
                 batch_uncond = deepcopy(batch)
                 batch_uncond['text'] = ['' for _ in batch_uncond['text']]
-                batch_uncond['txt_image'] = [ Image.new(img.mode, img.size, 'white') for img in batch['txt_image'] ]
+                if isinstance(self.cond_stage_model, (TextImageInpaintEmbedder, FrozenPretrainedImageEmbedder)):
+                    batch_uncond['txt_image'] = [ Image.new(img.mode, img.size, 'white') for img in batch['txt_image'] ]
+                elif isinstance(self.cond_stage_model, (FrozenPretrainedMultiModalEmbedder,)):
+                    batch_uncond['txt_image'] = torch.ones_like(batch_uncond['txt_image'])
                 _, uncond_c = self.get_input(batch_uncond, self.first_stage_key, force_c_encode=True, bs=N)
+                if isinstance(self.cond_stage_model, (FrozenPretrainedMultiModalEmbedder,)):
+                    j = uncond_c['c_name'].index('lang')
+                    c_lang_ca_shape, uncond_c_lang_ca_shape = c['c_crossattn'][j].shape, uncond_c['c_crossattn'][j].shape
+                    diff = c_lang_ca_shape[1] - uncond_c_lang_ca_shape[1]
+                    if diff > 0:
+                        uncond_c['c_crossattn'][j] = F.pad(uncond_c['c_crossattn'][j], (0, 0, 0, diff, 0, 0), 'constant', 0)
+                        uncond_c['c_crossattn_mask'][j] = F.pad(uncond_c['c_crossattn_mask'][j], (0, diff, 0, 0), 'constant', 0)
                 with self.ema_scope("Poltting Inpaint w/ classifier free guidence 2.0"):
                     samples, _ = self.sample_log(
                         cond=c,

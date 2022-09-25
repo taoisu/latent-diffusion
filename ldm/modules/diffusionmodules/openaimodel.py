@@ -862,6 +862,7 @@ class UNetModel(nn.Module):
         context_mask = None
         if isinstance(context, Dict):
             crossattn_context = []
+            crossattn_mask = []
             for key, val in context.items():
                 if 'emb' in val:
                     proj_module = getattr(self, f'{key}_emb_proj')
@@ -870,9 +871,11 @@ class UNetModel(nn.Module):
                     proj_module = getattr(self, f'{key}_crossattn_proj')
                     crossattn_context.append(proj_module(val['crossattn']))
                 if 'crossattn_mask' in val and val['crossattn_mask'] is not None:
-                    context_mask = val['crossattn_mask'] == 1
+                    crossattn_mask.append(val['crossattn_mask'] == 1)
             crossattn_context = th.cat(crossattn_context, dim=1)
             context = crossattn_context
+            if crossattn_mask:
+                context_mask = th.cat(crossattn_mask, dim=1)
 
         if self.patch_size > 1:
             x = self.to_patches(x)
