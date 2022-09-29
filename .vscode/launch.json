@@ -5,6 +5,25 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "scripts/sample_avidinpaint.py",
+            "type": "python",
+            "request": "launch",
+            "program": "scripts/sample_avidinpaint.py",
+            "args": [
+                "--base", "/mount/airocrhbi/ocr-data/Vertical/vdipainter/logs/inpaintavid128/2022-09-18T06-25-52_txtinpaintavid128_fsdp-fairscale-hgvitl16-224/configs/2022-09-18T06-25-52-project.yaml",
+                "--resume", "/mount/airocrhbi/ocr-data/Vertical/vdipainter/logs/inpaintavid128/2022-09-18T06-25-52_txtinpaintavid128_fsdp-fairscale-hgvitl16-224/checkpoints/last.ckpt",
+                "--out_dir", "/home/xiaguo/latent-diffusion/logs/tmp"
+            ],
+            "env": {
+                "AVID_ROOT_DIR": "/mount/airocrhbi/ocr-data/Vertical/vdipainter/data/avidxchange",
+                "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/assets/FreeSerif.ttf",
+                "MASTER_ADDR": "127.0.0.1",
+                "MASTER_PORT": "55555"
+            },
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
             "name": "ldm/data/laion.py",
             "type": "python",
             "request": "launch",
@@ -47,11 +66,11 @@
             "program": "ldm/data/avid.py",
             "args": [
                 "--mode",
-                "test_inpaint_img"
+                "test_inpaint_sw"
             ],
             "env": {
-                "AVID_ROOT_DIR": "/home/xiaguo/guided-diffusion/data",
-                "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/ldm/assets/FreeSerif.ttf"
+                "AVID_ROOT_DIR": "/datadisk",
+                "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/assets/FreeSerif.ttf"
             },
             "console": "integratedTerminal",
             "justMyCode": true
@@ -110,17 +129,43 @@
                 "--scale_lr",
                 "false",
                 "--base",
-                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-vitt10.yaml",
+                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-hgvitb16-224.yaml",
                 "--accelerator",
                 "gpu",
                 "--devices",
-                "0,1",
+                "0,",
+                "-t",
+                "-r",
+                "logs/2022-09-22T03-16-07_txtinpaintavid128_fsdp-fairscale-hgvitb16-224/checkpoints/last.ckpt"
+            ],
+            "env": {
+                "AVID_ROOT_DIR": "/datadisk",
+                "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/assets/FreeSerif.ttf",
+                "CUDA_LAUNCH_BLOCKING": "1",
+            },
+            "justMyCode": false
+        },
+        {
+            "name": "main.py - train inpaint multimodal avid",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "args": [
+                "--scale_lr",
+                "false",
+                "--base",
+                "configs/just-diffusion/txtinpaintavid128_fsdp-fairscale-hgvitl16-224-t5xl.yaml",
+                "--accelerator",
+                "gpu",
+                "--devices",
+                "0,",
                 "-t",
             ],
             "env": {
-                "AVID_ROOT_DIR": "/home/xiaguo/guided-diffusion/data",
+                "AVID_ROOT_DIR": "/datadisk",
                 "AVID_FONT_PATH": "/home/xiaguo/latent-diffusion/assets/FreeSerif.ttf",
                 "CUDA_LAUNCH_BLOCKING": "1",
+                "TOKENIZERS_PARALLELISM": "false"
             },
             "justMyCode": false
         },
@@ -133,15 +178,15 @@
                 "--scale_lr",
                 "false",
                 "--base",
-                "configs/just-diffusion/sravid512x4_fsdp-fairscale.yaml",
+                "configs/just-diffusion/sravid512x4_fsdp-fairscale-opainet.yaml",
                 "--accelerator",
                 "gpu",
                 "--devices",
-                "0,1",
+                "1,",
                 "-t",
             ],
             "env": {
-                "AVID_ROOT_DIR": "/mnt/batch/tasks/shared/LS_root/jobs/ocr2/azureml/vdipt_1663017548_c18fd96b/mounts/airocrhbi_ocr_data/Vertical/vdipainter/data/avidxchange",
+                "AVID_ROOT_DIR": "/home/xiaguo/guided-diffusion/data",
                 "CUDA_LAUNCH_BLOCKING": "1"
             },
             "justMyCode": false

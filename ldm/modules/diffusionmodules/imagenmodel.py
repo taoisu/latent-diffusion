@@ -6,7 +6,7 @@ from omegaconf import ListConfig
 from typing import Dict, List, Union, Tuple
 
 from ldm.modules.attention import SpatialTransformer
-from ldm.modules.diffusionmodules.openaimodel import Downsample, Upsample, ResBlock
+from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, Downsample, Upsample, ResBlock
 from ldm.modules.diffusionmodules.openaimodel import TimestepEmbedSequential as TimeEmbSeq
 from ldm.modules.diffusionmodules.util import linear, zero_module
 from ldm.modules.diffusionmodules.util import conv_nd, normalization, timestep_embedding
@@ -57,6 +57,7 @@ class EfficientUNetModel(nn.Module):
         num_head_channels:int=-1,
         use_scale_shift_norm:bool=False,
         resblock_updown:bool=False,
+        use_spatial_transformer:bool=True,
         transformer_depth:int=1,
         context_dim:int=None,
         contexts:Dict=None,
@@ -81,6 +82,7 @@ class EfficientUNetModel(nn.Module):
         self.num_head_channels = num_head_channels
         self.num_heads_upsample = num_heads_upsample
         self.dims = dims
+        self.use_spatial_transformer = use_spatial_transformer
         self.transformer_depth = transformer_depth
         self.context_dim = context_dim
         self.resblock_updown = resblock_updown
@@ -149,11 +151,19 @@ class EfficientUNetModel(nn.Module):
             ),
             SpatialTransformer(
                 out_ch,
-                num_heads,
+                num_heads if num_head_channels == -1 else out_ch // num_head_channels,
                 num_head_channels if num_head_channels != -1 else out_ch // num_heads,
                 depth=transformer_depth,
                 context_dim=context_dim,
                 checkpoint=checkpoint,
+                skip_rescale=skip_rescale,
+            ) if use_spatial_transformer else AttentionBlock(
+                out_ch,
+                checkpoint=checkpoint,
+                num_heads=num_heads if num_head_channels == -1 else out_ch // num_head_channels,
+                num_head_channels=num_head_channels if num_head_channels != -1 else out_ch // num_heads,
+                use_new_attention_order=True,
+                skip_rescale=skip_rescale,
             ),
             ResBlock(
                 out_ch,
@@ -224,6 +234,7 @@ class EfficientUNetModel(nn.Module):
         conv_resample = self.conv_resample
         checkpoint = self.checkpoint
         resblock_updown = self.resblock_updown
+        use_spatial_transformer = self.use_spatial_transformer
         transformer_depth = self.transformer_depth
         use_scale_shift_norm = self.use_scale_shift_norm
         attention_resolutions = self.attention_resolutions
@@ -250,14 +261,25 @@ class EfficientUNetModel(nn.Module):
                 else:
                     num_heads = in_ch // num_head_channels
                     dim_head = num_head_channels
-                layers.append(SpatialTransformer(
-                    in_ch,
-                    num_heads,
-                    dim_head,
-                    depth=transformer_depth,
-                    context_dim=context_dim,
-                    checkpoint=checkpoint,
-                ))
+                if use_spatial_transformer:
+                    layers.append(SpatialTransformer(
+                        in_ch,
+                        num_heads,
+                        dim_head,
+                        depth=transformer_depth,
+                        context_dim=context_dim,
+                        checkpoint=checkpoint,
+                        skip_rescale=skip_rescale,
+                    ))
+                else:
+                    layers.append(AttentionBlock(
+                        in_ch,
+                        num_heads,
+                        dim_head,
+                        checkpoint=checkpoint,
+                        use_new_attention_order=True,
+                        skip_rescale=skip_rescale,
+                    ))
             if need_up and i == num_res_blocks:
                 layers.append(ResBlock(
                     in_ch,
@@ -294,6 +316,7 @@ class EfficientUNetModel(nn.Module):
         conv_resample = self.conv_resample
         checkpoint = self.checkpoint
         resblock_updown = self.resblock_updown
+        use_spatial_transformer = self.use_spatial_transformer
         transformer_depth = self.transformer_depth
         use_scale_shift_norm = self.use_scale_shift_norm
         attention_resolutions = self.attention_resolutions
@@ -342,14 +365,25 @@ class EfficientUNetModel(nn.Module):
                 else:
                     num_heads = out_ch // num_head_channels
                     dim_head = num_head_channels
-                layers.append(SpatialTransformer(
-                    out_ch,
-                    num_heads,
-                    dim_head,
-                    depth=transformer_depth,
-                    context_dim=context_dim,
-                    checkpoint=checkpoint,
-                ))
+                if use_spatial_transformer:
+                    layers.append(SpatialTransformer(
+                        out_ch,
+                        num_heads,
+                        dim_head,
+                        depth=transformer_depth,
+                        context_dim=context_dim,
+                        checkpoint=checkpoint,
+                        skip_rescale=skip_rescale,
+                    ))
+                else:
+                    layers.append(AttentionBlock(
+                        out_ch,
+                        num_heads,
+                        dim_head,
+                        checkpoint=checkpoint,
+                        use_new_attention_order=True,
+                        skip_rescale=skip_rescale,
+                    ))
             blocks.append(TimeEmbSeq(*layers))
             channs.append(out_ch)
 

@@ -1,5 +1,5 @@
 model:
-  base_learning_rate: 5.0e-05
+  base_learning_rate: 1.0e-04
   target: ldm.models.diffusion.ddpm.LatentDiffusion
   params:
     linear_start: 0.0015
@@ -10,39 +10,50 @@ model:
     timesteps: 1000
     loss_type: l2
     first_stage_key: image
-    cond_stage_key: txt_image
+    cond_stage_key: multimodal
     image_size: 128
     channels: 3
     cond_stage_trainable: false
     conditioning_key: tybrid
     monitor: val/loss_simple_ema
+    scheduler_config: # 10000 warmup steps
+      target: ldm.lr_scheduler.LambdaLinearScheduler
+      params:
+        warm_up_steps: [10000]
+        cycle_lengths: [10000000000000]
+        f_start: [1.e-6]
+        f_max: [1]
+        f_min: [1]
     unet_config:
       target: ldm.modules.diffusionmodules.openaimodel.UNetModel
       params:
         image_size: 128
-        in_channels: 4
+        in_channels: 5
         out_channels: 3
         model_channels: 160
         checkpoint: fairscale
         attention_resolutions: [32, 16]
         num_res_blocks: 3
-        channel_mult: [1, 2, 4, 4]
+        channel_mult: [1, 2, 4, 6]
         num_heads: 8
         use_spatial_transformer: true
         transformer_depth: 1
         context_dim: 512
         contexts:
-          txtimg:
+          vision:
             seq_dim: 1024
             pooled_dim: 1024
+          lang:
+            seq_dim: 2048
+            pooled_dim: 2048
     first_stage_config:
       target: ldm.models.autoencoder.IdentityFirstStage
     cond_stage_config:
-      target: ldm.modules.encoders.modules.FrozenPretrainedImageEmbedder
+      target: ldm.modules.encoders.modules.FrozenPretrainedMultiModalEmbedder
       params:
-        model_name: google/vit-large-patch16-224
+        vision_model_name: google/vit-large-patch16-224
+        lang_model_name: google/t5-v1_1-xl
         image_size: 128
-        canvas_pad: 12
         with_concat: true
         with_emb: true
         with_crossattn: true
@@ -54,19 +65,25 @@ data:
     wrap: false
     num_workers: 32
     train:
-      target: ldm.data.avid.AvidInpaintTxtImgTrain
+      target: ldm.data.avid.AvidInpaintSizeAware
       params:
         size: 128
         names: [Limit1]
-        font_size: 48
-        img_height: 64
+        min_font_size: 10
+        max_font_size: 16
+        cond_size: 224
+        cond_font_size: 24
         dropout: 0.2
     validation:
-      target: ldm.data.avid.AvidInpaintTxtImgValidation
+      target: ldm.data.avid.AvidInpaintSizeAware
       params:
         size: 128
-        font_size: 48
-        img_height: 64
+        names: [Random]
+        min_font_size: 10
+        max_font_size: 16
+        cond_size: 224
+        cond_font_size: 24
+        num_samples: 1024
 lightning:
   callbacks:
     image_logger:

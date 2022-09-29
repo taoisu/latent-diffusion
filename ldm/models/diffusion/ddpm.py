@@ -40,6 +40,7 @@ from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, T
 from ldm.modules.encoders.modules import (
     FrozenPretrainedTextEmbedder,
     FrozenTextInpaintEmbedder,
+    FrozenPretrainedMultiModalEmbedder,
     TextImageInpaintEmbedder,
     FrozenPretrainedImageEmbedder,
 )
@@ -94,19 +95,22 @@ class DDPM(pl.LightningModule):
         cosine_s:float=8e-3,
         given_betas:List=None,
         original_elbo_weight:float=0.,
+        true_elbo_weight:float=0.001,
         v_posterior:float=0.,  # weight for choosing posterior variance as sigma = (1-v) * beta_tilde + v * beta
         l_simple_weight:float=1.,
         conditioning_key:str=None,
-        parameterization:str="eps",  # all assuming fixed variance schedules
+        mean_parameterization:str="eps",  # all assuming fixed variance schedules
+        var_parameterization:str="fixed_small",
         scheduler_config:Dict=None,
         use_positional_encodings:bool=False,
         learn_logvar:bool=False,
         logvar_init:float=0.,
     ):
         super().__init__()
-        assert parameterization in ["eps", "x0"], 'currently only supporting "eps" and "x0"'
-        self.parameterization = parameterization
-        print(f"{self.__class__.__name__}: Running in {self.parameterization}-prediction mode")
+        assert mean_parameterization in ["eps", "x0"], 'currently only supporting "eps" and "x0"'
+        self.mean_parameterization = mean_parameterization
+        self.var_parameterization = var_parameterization
+        print(f"{self.__class__.__name__}: Running in {mean_parameterization}-prediction mode, var-{var_parameterization}")
         self.cond_stage_model = None
         self.clip_denoised = clip_denoised
         self.log_every_t = log_every_t
@@ -125,8 +129,10 @@ class DDPM(pl.LightningModule):
         if self.use_scheduler:
             self.scheduler_config = scheduler_config
 
+        assert v_posterior == 0, 'please use var_parameterization instead'
         self.v_posterior = v_posterior
         self.original_elbo_weight = original_elbo_weight
+        self.true_elbo_weight = true_elbo_weight
         self.l_simple_weight = l_simple_weight
 
         if monitor is not None:
@@ -205,9 +211,9 @@ class DDPM(pl.LightningModule):
         self.register_buffer('posterior_mean_coef1', to_torch(betas * np.sqrt(alphas_cumprod_prev) / (1. - alphas_cumprod)))
         self.register_buffer('posterior_mean_coef2', to_torch((1. - alphas_cumprod_prev) * np.sqrt(alphas) / (1. - alphas_cumprod)))
 
-        if self.parameterization == "eps":
+        if self.mean_parameterization == "eps":
             lvlb_weights = self.betas**2/(2*self.posterior_variance*to_torch(alphas)*(1-self.alphas_cumprod))
-        elif self.parameterization == "x0":
+        elif self.mean_parameterization == "x0":
             lvlb_weights = 0.5*np.sqrt(torch.Tensor(alphas_cumprod))/(2.*1-torch.Tensor(alphas_cumprod))
         else:
             raise NotImplementedError("mu not supported")
@@ -250,11 +256,20 @@ class DDPM(pl.LightningModule):
             print(f"Unexpected Keys: {unexpected}")
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
-        if isinstance(self.cond_stage_model, (FrozenPretrainedTextEmbedder,)):
+        if isinstance(self.cond_stage_model, (FrozenPretrainedTextEmbedder,FrozenPretrainedImageEmbedder,FrozenPretrainedMultiModalEmbedder)):
             strict = False
         return super().load_state_dict(state_dict=state_dict, strict=strict)
 
-    def q_mean_variance(self, x_start, t):
+    def compute_var_from_range(self, model_var_out:Tensor, t:Tensor):
+        shape = model_var_out.shape
+        min_log = extract_into_tensor(self.posterior_log_variance_clipped, t, shape)
+        max_log = extract_into_tensor(torch.log(self.betas), t, shape)
+        frac = (model_var_out+1)/2
+        model_log_variance = frac*max_log+(1-frac)*min_log
+        model_variance = torch.exp(model_log_variance)
+        return model_variance, model_log_variance
+
+    def q_mean_variance(self, x_start:Tensor, t:Tensor):
         """
         Get the distribution q(x_t | x_0).
         :param x_start: the [N x C x ...] tensor of noiseless inputs.
@@ -271,6 +286,11 @@ class DDPM(pl.LightningModule):
         sqrt_recipm1_alphas_cumprod_t = extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
         return sqrt_recip_alphas_cumprod_t * x_t - sqrt_recipm1_alphas_cumprod_t * noise
 
+    def noise_from_predict_start(self, x_t:Tensor, t:Tensor, x_0:Tensor):
+        sqrt_recip_alphas_cumprod_t = extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape)
+        sqrt_recipm1_alphas_cumprod_t = extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+        return (sqrt_recip_alphas_cumprod_t * x_t - x_0) / sqrt_recipm1_alphas_cumprod_t
+
     def q_posterior(self, x_start:Tensor, x_t:Tensor, t:Tensor):
         posterior_mean_coef1_t = extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape)
         posterior_mean_coef2_t = extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape)
@@ -279,17 +299,39 @@ class DDPM(pl.LightningModule):
         posterior_log_variance_clipped = extract_into_tensor(self.posterior_log_variance_clipped, t, x_t.shape)
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
-    def p_mean_variance(self, x:Tensor, t:Tensor, clip_denoised:bool):
-        model_out = self.model(x, t)
-        if self.parameterization == "eps":
-            x_recon = self.predict_start_from_noise(x, t=t, noise=model_out)
-        elif self.parameterization == "x0":
-            x_recon = model_out
+    def p_mean_variance(self, x:Tensor, t:Tensor, clip_denoised:bool, model_fn:Callable=None):
+        '''
+        Apply the model to get p(x_{t-1} | x_t)
+        :param x: the [N x C x ...] noised tensor at time t
+        :param t: a 1-D tensor of timesteps
+        :clip_denoised: if clip should be applied to predicted x_0
+        :return a tuple of mean, variance, log_variance
+        '''
+        model_out = self.model(x, t) if model_fn is not None else model_fn(x, t)
+        ch = x.shape[1]
+        if model_out.shape[1] == ch * 2:
+            model_mean_out, model_var_out = torch.split(model_out, ch, dim=1)
+        else:
+            model_mean_out, model_var_out = model_out, None
+
+        if self.mean_parameterization == "eps":
+            x_recon = self.predict_start_from_noise(x, t=t, noise=model_mean_out)
+        elif self.mean_parameterization == "x0":
+            x_recon = model_mean_out
         if clip_denoised:
             x_recon.clamp_(-1., 1.)
 
         model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
-        return model_mean, posterior_variance, posterior_log_variance
+        if self.var_parameterization == 'fixed_small':
+            variance, log_variance = posterior_variance, posterior_log_variance
+        elif self.var_parameterization == 'fixed_large':
+            variance = torch.cat(self.posterior_variance[1], self.betas[1:])
+            log_variance = torch.log(variance)
+        elif self.var_parameterization == 'learned_range':
+            variance, log_variance = self.compute_var_from_range(model_var_out, t)
+        else:
+            raise ValueError(f'Unknown var_parameterization: {self.var_parameterization}')
+        return model_mean, variance, log_variance
 
     @torch.no_grad()
     def p_sample(self, x:Tensor, t:Tensor, clip_denoised:bool=True, repeat_noise:bool=False):
@@ -329,7 +371,10 @@ class DDPM(pl.LightningModule):
         sqrt_one_minus_alphas_cumprod_t = extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape)
         return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
 
-    def get_loss(self, pred:Tensor, target:Tensor, mean:bool=True):
+    def get_loss(self, pred:Tensor, target:Tensor, mask:Tensor=None, mean:bool=True):
+        if mask is None:
+            mask = torch.ones_like(pred)
+        target, pred = target * mask, pred * mask
         if self.loss_type == 'l1':
             loss = (target - pred).abs()
             if mean:
@@ -348,16 +393,21 @@ class DDPM(pl.LightningModule):
         noise = default(noise, lambda: torch.randn_like(x_start))
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         model_out = self.model(x_noisy, t)
+        ch = x_start.shape[1]
+        if model_out.shape[1] == ch * 2:
+            model_mean_out, model_var_out = torch.split(model_out, ch, dim=1)
+        else:
+            model_mean_out, model_var_out = model_out, None
 
         loss_dict={}
-        if self.parameterization == "eps":
+        if self.mean_parameterization == "eps":
             target = noise
-        elif self.parameterization == "x0":
+        elif self.mean_parameterization == "x0":
             target = x_start
         else:
-            raise NotImplementedError(f"Paramterization {self.parameterization} not yet supported")
+            raise NotImplementedError(f"Paramterization {self.mean_parameterization} not yet supported")
 
-        loss = self.get_loss(model_out, target, mean=False).mean(dim=[1, 2, 3])
+        loss = self.get_loss(model_mean_out, target, mean=False).mean(dim=[1, 2, 3])
 
         log_prefix = 'train' if self.training else 'val'
 
@@ -368,6 +418,19 @@ class DDPM(pl.LightningModule):
         loss_dict.update({f'{log_prefix}/loss_vlb': loss_vlb})
 
         loss = loss_simple + self.original_elbo_weight * loss_vlb
+
+        if self.var_parameterization == 'learned_range':
+            frozen_out = torch.cat([model_mean_out.detach(), model_var_out], dim=1)
+            loss_true_vlb = self.vb_terms_bpd(
+                model_fn=lambda *args, r=frozen_out, **kwargs: r,
+                x_start=x_start,
+                x_t=x_noisy,
+                t=t,
+                clip_denoised=False,
+            )
+            loss_true_vlb = loss_true_vlb.mean() * self.true_elbo_weight
+            loss_dict.update({f'{log_prefix}/loss_true_vlb': loss_true_vlb})
+            loss = loss + loss_true_vlb
 
         loss_dict.update({f'{log_prefix}/loss': loss})
 
@@ -398,7 +461,7 @@ class DDPM(pl.LightningModule):
         self.log("global_step", float(self.global_step), prog_bar=True, logger=True, on_step=True, on_epoch=False)
 
         if self.use_scheduler:
-            lr = self.optimizers().param_groups[0]['lr']
+            lr = self.optimizers(use_pl_optimizer=False).param_groups[0]['lr']
             self.log('lr_abs', lr, prog_bar=True, logger=True, on_step=True, on_epoch=False)
 
         return loss
@@ -805,6 +868,17 @@ class LatentDiffusion(DDPM):
 
         return fold, unfold, normalization, weighting
 
+    def get_partial_batch(self, x:Union[Tensor,Dict,List], bs:int):
+        if isinstance(x, Tensor):
+            return x[:bs]
+        elif isinstance(x, Dict):
+            for k in list(x.keys()):
+                x[k] = self.get_partial_batch(x[k], bs)
+        elif isinstance(x, List):
+            for i, _ in enumerate(x):
+                x[i] = self.get_partial_batch(x[i], bs)
+        return x
+
     @torch.no_grad()
     def get_input(
         self,
@@ -829,7 +903,7 @@ class LatentDiffusion(DDPM):
             if cond_key != self.first_stage_key:
                 if cond_key in ['caption', 'coordinates_bbox']:
                     xc = batch[cond_key]
-                elif cond_key in ['class_label', 'patch', 'text', 'txt_image']:
+                elif cond_key in ['class_label', 'patch', 'text', 'txt_image', 'multimodal']:
                     xc = batch
                 elif cond_key == 'lr_image':
                     xc = super().get_input(batch, cond_key).to(self.device)
@@ -847,12 +921,7 @@ class LatentDiffusion(DDPM):
             else:
                 c = xc
             if bs is not None:
-                if isinstance(c, Tensor):
-                    c = c[:bs]
-                elif isinstance(c, dict):
-                    for k in list(c.keys()):
-                        if isinstance(c[k], Tensor):
-                            c[k] = c[k][:bs]
+                c = self.get_partial_batch(c, bs)
 
             if self.use_positional_encodings:
                 pos_x, pos_y = self.compute_latent_shifts(batch)
@@ -1199,26 +1268,103 @@ class LatentDiffusion(DDPM):
         else:
             return torch.ones_like(x_start, dtype=x_start.dtype)
 
+    def normal_kl(self, lmean:Tensor, llogvar:Tensor, rmean:Tensor, rlogvar:Tensor):
+        '''
+        Compute the KL divergence between two gaussians. Shapes are automatically
+        broadcasted, so batches can be compared to scalars, among other use cases.
+        '''
+        return 0.5 * (
+            -1.0
+            + rlogvar
+            - llogvar
+            + torch.exp(llogvar - rlogvar)
+            + ((lmean - rmean)**2)*torch.exp(-rlogvar)
+        )
+
+    def approx_standard_normal_cdf(self, x:Tensor):
+        '''
+        A fast approximation of the cumulative distribution function of the standard normal.
+        '''
+        return 0.5 * (1.0 + torch.tanh(np.sqrt(2.0 / np.pi) * (x + 0.044715 * torch.pow(x, 3))))
+
+    def discretized_gaussian_log_likelihood(self, x:Tensor, *, means:Tensor, log_scales:Tensor):
+        '''
+        Compute the log-likelihood of a Gaussian distribution discretizing to a given image.
+        :param x: the target images. Assume the image was uint8 rescaled to range [-1, 1]
+        :param means:the Gaussian mean
+        :param log_scales: the Gaussian log stddev Tensor
+        :return: a tensor-like x of log probabilities (in nats)
+        '''
+        assert x.shape == means.shape == log_scales.shape
+        centered_x = x - means
+        inv_stdv = torch.exp(-log_scales)
+        plus_in = inv_stdv * (centered_x + 1.0 / 255.0)
+        cdf_plus = self.approx_standard_normal_cdf(plus_in)
+        min_in = inv_stdv * (centered_x - 1.0 / 255.0)
+        cdf_min = self.approx_standard_normal_cdf(min_in)
+        log_cdf_plus = torch.log(cdf_plus.clamp(min=1e-12))
+        log_one_minus_cdf_min = torch.log((1.0 - cdf_min).clamp(min=1e-12))
+        cdf_delta = cdf_plus - cdf_min
+        log_probs = torch.where(
+            x < -0.999,
+            log_cdf_plus,
+            torch.where(x > 0.999, log_one_minus_cdf_min, torch.log(cdf_delta.clamp(min=1e-12))),
+        )
+        assert log_probs.shape == x.shape
+        return log_probs
+
+    def vb_terms_bpd(self, x_start:Tensor, x_t:Tensor, cond:Tensor, t:Tensor, mask:Tensor=None, clip_denoised:bool=True, model_fn:Callable=None):
+        '''
+        Get a term for the variational lower-bound.
+        :param x_start: the [N x C x ...] tensor of noiseless inputs.
+        :param x_t: [N x C x ...] tensor of noised inputs.
+        :param clip_denoised: clip predicted x0 to the range [-1, 1]
+        :return vlbs
+        '''
+        def mean_flat(tsr:Tensor):
+            return tsr.mean(dim=list(range(1,len(tsr.shape))))
+
+        if mask is None:
+            mask = torch.ones_like(x_start)
+
+        true_mean, _, true_log_variance_clipped = self.q_posterior(x_start, x_t, t)
+        mean, _, log_variance = self.p_mean_variance(
+            x=x_t,
+            c=cond,
+            t=t,
+            clip_denoised=clip_denoised,
+            model_fn=model_fn,
+        )
+        kl = self.normal_kl(true_mean, true_log_variance_clipped, mean, log_variance) * mask
+        kl = mean_flat(kl) / np.log(2.0)
+        decoder_nll = -self.discretized_gaussian_log_likelihood(x_start, means=mean, log_scales=0.5*log_variance) * mask
+        assert decoder_nll.shape == x_start.shape
+        decoder_nll = mean_flat(decoder_nll) / np.log(2.0)
+        vlbs = torch.where(t == 0, decoder_nll, kl)
+        return vlbs
+
     def p_losses(self, x_start:Tensor, cond:Union[Tensor,Dict], t:Tensor, noise:Tensor=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         model_output = self.apply_model(x_noisy, t, cond)
+        ch = x_start.shape[1]
+        if model_output.shape[1] == ch * 2:
+            model_mean_out, model_var_out = torch.split(model_output, ch, dim=1)
+        else:
+            model_mean_out, model_var_out = model_output, None
 
         loss_dict={}
         prefix = 'train' if self.training else 'val'
 
-        if self.parameterization == "x0":
+        if self.mean_parameterization == "x0":
             target = x_start
-        elif self.parameterization == "eps":
+        elif self.mean_parameterization == "eps":
             target = noise
         else:
             raise NotImplementedError()
 
         mask = self.get_loss_mask(x_start, cond)
-        model_output = mask * model_output
-        target = mask * target
-
-        loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
+        loss_simple = self.get_loss(model_mean_out, target, mask=mask, mean=False).mean([1, 2, 3])
         loss_dict.update({f'{prefix}/loss_simple': loss_simple.mean()})
 
         logvar_t = self.logvar[t].to(self.device)
@@ -1230,10 +1376,25 @@ class LatentDiffusion(DDPM):
 
         loss = self.l_simple_weight * loss.mean()
 
-        loss_vlb = self.get_loss(model_output, target, mean=False).mean(dim=(1, 2, 3))
-        loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
-        loss_dict.update({f'{prefix}/loss_vlb': loss_vlb})
-        loss += (self.original_elbo_weight * loss_vlb)
+        if self.original_elbo_weight > 0:
+            loss_vlb = self.get_loss(model_mean_out, target, mask=mask, mean=False).mean(dim=(1, 2, 3))
+            loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
+            loss_dict.update({f'{prefix}/loss_vlb': loss_vlb})
+            loss += (self.original_elbo_weight * loss_vlb)
+
+        if self.var_parameterization == 'learned_range':
+            frozen_out = torch.cat([model_mean_out.detach(), model_var_out], dim=1)
+            loss_true_vlb = self.vb_terms_bpd(
+                model_fn=lambda *args, r=frozen_out, **kwargs: r,
+                x_start=x_start,
+                x_t=x_noisy,
+                t=t,
+                cond=cond,
+                clip_denoised=False,
+            )
+            loss_true_vlb = loss_true_vlb.mean() * self.true_elbo_weight
+            loss_dict.update({f'{prefix}/loss_true_vlb': loss_true_vlb})
+            loss = loss + loss_true_vlb
         loss_dict.update({f'{prefix}/loss': loss})
 
         return loss, loss_dict
@@ -1249,21 +1410,66 @@ class LatentDiffusion(DDPM):
         return_x0:bool=False,
         score_corrector:Any=None,
         corrector_kwargs:Dict=None,
+        model_fn:Callable=None,
+        unconditional_guidance_scale:float=1.,
+        unconditional_conditioning:Union[Tensor,Dict]=None,
     ):
-        t_in = t
-        model_out = self.apply_model(x, t_in, c, return_ids=return_codebook_ids)
+        use_cfg = not (unconditional_conditioning is None or unconditional_guidance_scale == 1.)
+        if model_fn is None:
+            if not use_cfg:
+                model_out = self.apply_model(x, t, c, return_ids=return_codebook_ids)
+            else:
+                x_in, t_in = torch.cat([x] * 2), torch.cat([t] * 2)
+                if isinstance(c, Dict):
+                    assert unconditional_conditioning.keys() == c.keys()
+                    uc = unconditional_conditioning
+                    keys = list(c.keys())
+                    c_in = {}
+                    for key in keys:
+                        if isinstance(c[key], str):
+                            c_in[key] = c[key]
+                        else:
+                            c_in[key] = torch.cat([uc[key], c[key]])
+                else:
+                    c_in = torch.cat([unconditional_conditioning, c])
+                model_out_uncond, model_out = self.apply_model(x_in, t_in, c_in, return_ids=return_codebook_ids).chunk(2)
+        else:
+            assert not use_cfg
+            model_out = model_fn(x, t, c, return_ids=return_codebook_ids)
+
+        ch = x.shape[1]
+        if model_out.shape[1] == ch * 2:
+            model_mean_out, model_var_out = torch.split(model_out, ch, dim=1)
+        else:
+            model_mean_out, model_var_out = model_out, None
+
+        if use_cfg:
+            if model_mean_out.shape[1] == ch * 2:
+                model_mean_out_uncond, model_var_out_uncond = torch.split(model_out_uncond, ch, dim=1)
+            else:
+                model_mean_out_uncond, model_var_out_uncond = model_out_uncond, None
 
         if score_corrector is not None:
-            assert self.parameterization == "eps"
-            model_out = score_corrector.modify_score(self, model_out, x, t, c, **corrector_kwargs)
+            assert self.mean_parameterization == "eps"
+            model_mean_out = score_corrector.modify_score(self, model_mean_out, x, t, c, **corrector_kwargs)
 
         if return_codebook_ids:
-            model_out, logits = model_out
+            model_mean_out, logits = model_mean_out
 
-        if self.parameterization == "eps":
-            x_recon = self.predict_start_from_noise(x, t=t, noise=model_out)
-        elif self.parameterization == "x0":
-            x_recon = model_out
+        if self.mean_parameterization == "eps":
+            if not use_cfg:
+                x_recon = self.predict_start_from_noise(x, t=t, noise=model_mean_out)
+            else:
+                e = model_mean_out_uncond + unconditional_guidance_scale * (model_mean_out - model_mean_out_uncond)
+                x_recon = self.predict_start_from_noise(x, t=t, noise=e)
+        elif self.mean_parameterization == "x0":
+            if not use_cfg:
+                x_recon = model_mean_out
+            else:
+                e_t = self.noise_from_predict_start(x, t, model_mean_out)
+                e_t_uncond = self.noise_from_predict_start(x, t, model_mean_out_uncond)
+                e = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+                x_recon = self.predict_start_from_noise(x, t=t, noise=e)
         else:
             raise NotImplementedError()
 
@@ -1271,13 +1477,24 @@ class LatentDiffusion(DDPM):
             x_recon.clamp_(-1., 1.)
         if quantize_denoised:
             x_recon, _, [_, _, indices] = self.first_stage_model.quantize(x_recon)
+
         model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_recon, x_t=x, t=t)
-        if return_codebook_ids:
-            return model_mean, posterior_variance, posterior_log_variance, logits
-        elif return_x0:
-            return model_mean, posterior_variance, posterior_log_variance, x_recon
+        if self.var_parameterization == 'fixed_small':
+            variance, log_variance = posterior_variance, posterior_log_variance
+        elif self.var_parameterization == 'fixed_large':
+            variance = torch.cat(self.posterior_variance[1], self.betas[1:])
+            log_variance = torch.log(variance)
+        elif self.var_parameterization == 'learned_range':
+            variance, log_variance = self.compute_var_from_range(model_var_out, t)
         else:
-            return model_mean, posterior_variance, posterior_log_variance
+            raise ValueError(f'Unknown var_parameterization: {self.var_parameterization}')
+
+        if return_codebook_ids:
+            return model_mean, variance, log_variance, logits
+        elif return_x0:
+            return model_mean, variance, log_variance, x_recon
+        else:
+            return model_mean, variance, log_variance
 
     @torch.no_grad()
     def p_sample(
@@ -1294,8 +1511,11 @@ class LatentDiffusion(DDPM):
         noise_dropout:float=0.,
         score_corrector:Any=None,
         corrector_kwargs:Dict=None,
+        unconditional_guidance_scale:float=1.,
+        unconditional_conditioning:Union[Tensor,Dict]=None,
     ):
         b, *_, device = *x.shape, x.device
+
         outputs = self.p_mean_variance(
             x=x,
             c=c,
@@ -1305,10 +1525,14 @@ class LatentDiffusion(DDPM):
             quantize_denoised=quantize_denoised,
             return_x0=return_x0,
             score_corrector=score_corrector,
-            corrector_kwargs=corrector_kwargs)
+            corrector_kwargs=corrector_kwargs,
+            unconditional_guidance_scale=unconditional_guidance_scale,
+            unconditional_conditioning=unconditional_conditioning)
+
         if return_codebook_ids:
             raise DeprecationWarning("Support dropped.")
             model_mean, _, model_log_variance, logits = outputs
+
         elif return_x0:
             model_mean, _, model_log_variance, x0 = outputs
         else:
@@ -1407,11 +1631,25 @@ class LatentDiffusion(DDPM):
         return img, intermediates
 
     @torch.no_grad()
-    def p_sample_loop(self, cond, shape, return_intermediates=False,
-                      x_T=None, verbose=True, callback=None, timesteps=None, quantize_denoised=False,
-                      mask=None, x0=None, img_callback=None, start_T=None,
-                      log_every_t=None):
-
+    def p_sample_loop(
+        self,
+        cond:Dict,
+        shape:Tensor,
+        return_intermediates:bool=False,
+        x_T:Tensor=None,
+        verbose:bool=True,
+        callback:Callable=None,
+        timesteps:int=None,
+        quantize_denoised:bool=False,
+        mask:Tensor=None,
+        x0:Tensor=None,
+        img_callback:Callable=None,
+        start_T:int=None,
+        log_every_t:int=None,
+        unconditional_guidance_scale:float=1.,
+        unconditional_conditioning:Tensor=None,
+        dynamic_thresholding:float=None,
+    ):
         if not log_every_t:
             log_every_t = self.log_every_t
         device = self.betas.device
@@ -1441,16 +1679,24 @@ class LatentDiffusion(DDPM):
                 tc = self.cond_ids[ts].to(cond.device)
                 cond = self.q_sample(x_start=cond, t=tc, noise=torch.randn_like(cond))
 
-            img = self.p_sample(img, cond, ts,
-                                clip_denoised=self.clip_denoised,
-                                quantize_denoised=quantize_denoised)
+            img = self.p_sample(
+                img,
+                cond,
+                ts,
+                clip_denoised=self.clip_denoised,
+                quantize_denoised=quantize_denoised,
+                unconditional_guidance_scale=unconditional_guidance_scale,
+                unconditional_conditioning=unconditional_conditioning,)
+
             if mask is not None:
                 img_orig = self.q_sample(x0, ts)
                 img = img_orig * mask + (1. - mask) * img
 
             if i % log_every_t == 0 or i == timesteps - 1:
                 intermediates.append(img)
+
             if callback: callback(i)
+
             if img_callback: img_callback(img, i)
 
         if return_intermediates:
@@ -1458,9 +1704,23 @@ class LatentDiffusion(DDPM):
         return img
 
     @torch.no_grad()
-    def sample(self, cond, batch_size=16, return_intermediates=False, x_T=None,
-               verbose=True, timesteps=None, quantize_denoised=False,
-               mask=None, x0=None, shape=None,**kwargs):
+    def sample(
+        self,
+        cond:Dict,
+        batch_size:int=16,
+        return_intermediates:bool=False,
+        x_T:Tensor=None,
+        verbose:bool=True,
+        timesteps:int=None,
+        quantize_denoised:bool=False,
+        mask:Tensor=None,
+        x0:Tensor=None,
+        shape:Tensor=None,
+        unconditional_guidance_scale:float=1.,
+        unconditional_conditioning:Tensor=None,
+        dynamic_thresholding:float=None,
+        **kwargs
+    ):
         if shape is None:
             shape = (batch_size, self.channels, self.image_size, self.image_size)
         if cond is not None:
@@ -1469,11 +1729,19 @@ class LatentDiffusion(DDPM):
                 list(map(lambda x: x[:batch_size], cond[key])) for key in cond}
             else:
                 cond = [c[:batch_size] for c in cond] if isinstance(cond, list) else cond[:batch_size]
-        return self.p_sample_loop(cond,
-                                  shape,
-                                  return_intermediates=return_intermediates, x_T=x_T,
-                                  verbose=verbose, timesteps=timesteps, quantize_denoised=quantize_denoised,
-                                  mask=mask, x0=x0)
+        return self.p_sample_loop(
+            cond,
+            shape,
+            return_intermediates=return_intermediates,
+            x_T=x_T,
+            verbose=verbose,
+            timesteps=timesteps,
+            quantize_denoised=quantize_denoised,
+            mask=mask,
+            x0=x0,
+            unconditional_guidance_scale=unconditional_guidance_scale,
+            unconditional_conditioning=unconditional_conditioning,
+            dynamic_thresholding=dynamic_thresholding)
 
     @torch.no_grad()
     def sample_log(
@@ -1502,7 +1770,6 @@ class LatentDiffusion(DDPM):
                 **kwargs)
 
         return samples, intermediates
-
 
     @torch.no_grad()
     def log_images(
@@ -1548,6 +1815,10 @@ class LatentDiffusion(DDPM):
                 log["conditioning"] = xc
                 xc = log_pil_as_img((x.shape[2], x.shape[3]), batch['txt_image'])
                 log["conditioning_rendered"] = xc
+            elif self.cond_stage_key == 'multimodal':
+                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch['text'])
+                log["conditioning_lang"] = xc
+                log["conditioning_vision"] = rearrange(batch["txt_image"], 'b h w c -> b c h w')
             elif self.cond_stage_key == 'class_label':
                 xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["human_label"])
                 log['conditioning'] = xc
@@ -1564,10 +1835,13 @@ class LatentDiffusion(DDPM):
             FrozenTextInpaintEmbedder,
             TextImageInpaintEmbedder,
             FrozenPretrainedImageEmbedder,
+            FrozenPretrainedMultiModalEmbedder,
         )
         if isinstance(self.cond_stage_model, classes):
             if 'c_concat' in c:
-                log['concat'] = c['c_concat']
+                cc_tsr = c['c_concat']
+                cc_tsr = cc_tsr if cc_tsr.shape[1] != 2 else cc_tsr[:,:1,...]
+                log['concat'] = cc_tsr
             mask = 1 - rearrange(batch['mask'][:N], 'b h w c -> b c h w')
             log["mask"] = mask.clone()*2-1
             # inpaint w/ mask
@@ -1583,11 +1857,21 @@ class LatentDiffusion(DDPM):
             x_samples = self.decode_first_stage(samples.to(self.device))
             log["samples_text_inpaint"] = x_samples
 
-            if isinstance(self.cond_stage_model, (TextImageInpaintEmbedder, FrozenPretrainedImageEmbedder)):
+            if isinstance(self.cond_stage_model, (TextImageInpaintEmbedder, FrozenPretrainedImageEmbedder, FrozenPretrainedMultiModalEmbedder)):
                 batch_uncond = deepcopy(batch)
                 batch_uncond['text'] = ['' for _ in batch_uncond['text']]
-                batch_uncond['txt_image'] = [ Image.new(img.mode, img.size, 'white') for img in batch['txt_image'] ]
+                if isinstance(self.cond_stage_model, (TextImageInpaintEmbedder, FrozenPretrainedImageEmbedder)):
+                    batch_uncond['txt_image'] = [ Image.new(img.mode, img.size, 'white') for img in batch['txt_image'] ]
+                elif isinstance(self.cond_stage_model, (FrozenPretrainedMultiModalEmbedder,)):
+                    batch_uncond['txt_image'] = torch.ones_like(batch_uncond['txt_image'])
                 _, uncond_c = self.get_input(batch_uncond, self.first_stage_key, force_c_encode=True, bs=N)
+                if isinstance(self.cond_stage_model, (FrozenPretrainedMultiModalEmbedder,)):
+                    j = uncond_c['c_name'].index('lang')
+                    c_lang_ca_shape, uncond_c_lang_ca_shape = c['c_crossattn'][j].shape, uncond_c['c_crossattn'][j].shape
+                    diff = c_lang_ca_shape[1] - uncond_c_lang_ca_shape[1]
+                    if diff > 0:
+                        uncond_c['c_crossattn'][j] = F.pad(uncond_c['c_crossattn'][j], (0, 0, 0, diff, 0, 0), 'constant', 0)
+                        uncond_c['c_crossattn_mask'][j] = F.pad(uncond_c['c_crossattn_mask'][j], (0, diff, 0, 0), 'constant', 0)
                 with self.ema_scope("Poltting Inpaint w/ classifier free guidence 2.0"):
                     samples, _ = self.sample_log(
                         cond=c,
@@ -1601,6 +1885,20 @@ class LatentDiffusion(DDPM):
                         unconditional_conditioning=uncond_c)
                 x_samples = self.decode_first_stage(samples.to(self.device))
                 log["samples_text_inpaint_cf_guide_2.0"] = x_samples
+
+                with self.ema_scope("Poltting Inpaint w/ classifier free guidence 5.0"):
+                    samples, _ = self.sample_log(
+                        cond=c,
+                        batch_size=N,
+                        ddim=use_ddim,
+                        eta=ddim_eta,
+                        ddim_steps=ddim_steps,
+                        x0=z[:N],
+                        mask=mask,
+                        unconditional_guidance_scale=5.0,
+                        unconditional_conditioning=uncond_c)
+                x_samples = self.decode_first_stage(samples.to(self.device))
+                log["samples_text_inpaint_cf_guide_5.0"] = x_samples
 
         if plot_diffusion_rows:
             # get diffusion row

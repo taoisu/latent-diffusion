@@ -255,8 +255,9 @@ class DDIMSampler(object):
     ):
         b, *_, device = *x.shape, x.device
 
-        if unconditional_conditioning is None or unconditional_guidance_scale == 1.:
-            e_t = self.model.apply_model(x, t, c)
+        use_cfg = not (unconditional_conditioning is None or unconditional_guidance_scale == 1.)
+        if not use_cfg:
+            model_out = self.model.apply_model(x, t, c)
         else:
             x_in = torch.cat([x] * 2)
             t_in = torch.cat([t] * 2)
@@ -268,15 +269,48 @@ class DDIMSampler(object):
                 for key in keys:
                     if isinstance(c[key], str):
                         c_in[key] = c[key]
-                    else:
+                    elif isinstance(c[key], Tensor):
                         c_in[key] = torch.cat([uc[key], c[key]])
+                    elif isinstance(c[key], list):
+                        c_in[key] = []
+                        for i, val in enumerate(c[key]):
+                            if isinstance(val, Tensor):
+                                c_in[key].append(torch.cat([uc[key][i], c[key][i]]))
+                            elif isinstance(val, str):
+                                c_in[key].append(val)
+                            else:
+                                raise ValueError()
+                    else:
+                        raise ValueError()
             else:
                 c_in = torch.cat([unconditional_conditioning, c])
-            e_t_uncond, e_t = self.model.apply_model(x_in, t_in, c_in).chunk(2)
-            e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+            model_out_uncond, model_out = self.model.apply_model(x_in, t_in, c_in).chunk(2)
+
+        if self.model.var_parameterization == 'learned_range':
+            ch = x.shape[1]
+            model_mean_out, _ = torch.split(model_out, ch, dim=1)
+            if use_cfg:
+                model_mean_out_uncond, _ = torch.split(model_out_uncond, ch, dim=1)
+        else:
+            model_mean_out = model_out
+            if use_cfg:
+                model_mean_out_uncond = model_out_uncond
+
+        if self.model.mean_parameterization == 'eps':
+            if use_cfg:
+                e_t = model_mean_out_uncond + unconditional_guidance_scale * (model_mean_out - model_mean_out_uncond)
+            else:
+                e_t = model_mean_out
+        elif self.model.mean_parameterization == 'x0':
+            if use_cfg:
+                e_t = self.model.noise_from_predict_start(x, t, model_mean_out)
+                e_t_uncond = self.model.noise_from_predict_start(x, t, model_mean_out_uncond)
+                e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+            else:
+                e_t = self.model.noise_from_predict_start(x, t, model_mean_out)
 
         if score_corrector is not None:
-            assert self.model.parameterization == "eps"
+            assert self.model.mean_parameterization == "eps"
             e_t = score_corrector.modify_score(self.model, e_t, x, t, c, **corrector_kwargs)
 
         alphas = self.model.alphas_cumprod if use_original_steps else self.ddim_alphas
