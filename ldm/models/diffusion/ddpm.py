@@ -256,7 +256,7 @@ class DDPM(pl.LightningModule):
             print(f"Unexpected Keys: {unexpected}")
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
-        if isinstance(self.cond_stage_model, (FrozenPretrainedTextEmbedder,FrozenPretrainedImageEmbedder)):
+        if isinstance(self.cond_stage_model, (FrozenPretrainedTextEmbedder,FrozenPretrainedImageEmbedder,FrozenPretrainedMultiModalEmbedder)):
             strict = False
         return super().load_state_dict(state_dict=state_dict, strict=strict)
 
@@ -461,7 +461,7 @@ class DDPM(pl.LightningModule):
         self.log("global_step", float(self.global_step), prog_bar=True, logger=True, on_step=True, on_epoch=False)
 
         if self.use_scheduler:
-            lr = self.optimizers().param_groups[0]['lr']
+            lr = self.optimizers(use_pl_optimizer=False).param_groups[0]['lr']
             self.log('lr_abs', lr, prog_bar=True, logger=True, on_step=True, on_epoch=False)
 
         return loss

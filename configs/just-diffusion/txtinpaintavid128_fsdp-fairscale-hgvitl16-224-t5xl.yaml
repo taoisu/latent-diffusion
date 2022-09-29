@@ -63,7 +63,7 @@ data:
   params:
     batch_size: 32
     wrap: false
-    num_workers: 2
+    num_workers: 32
     train:
       target: ldm.data.avid.AvidInpaintSizeAware
       params:
@@ -90,7 +90,7 @@ lightning:
       target: main.ImageLogger
       params:
         batch_frequency: 2000
-        increase_log_steps: true
+        increase_log_steps: false
         max_images: 8
         clamp: true
         log_images_kwargs:
