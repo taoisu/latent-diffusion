@@ -76,6 +76,48 @@
             "justMyCode": true
         },
         {
+            "name": "ldm/data/bizcard.py",
+            "type": "python",
+            "request": "launch",
+            "program": "ldm/data/bizcard.py",
+            "args": [
+                "--mode",
+                "gen_normalized_img"
+            ],
+            "env": {
+                "NORMALIZE_SRC_DIR": "/database/internal_batch1",
+                "NORMALIZE_OCR_DIR": "/database/endpointga/internal_batch1",
+                "NORMALIZE_DST_DIR": "/database/TrainSuperRes",
+            },
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "ldm/data/bizcard.py partial",
+            "type": "python",
+            "request": "launch",
+            "program": "ldm/data/bizcard.py",
+            "args": [
+                "--mode",
+                "gen_partial_img"
+            ],
+            // "env": {
+            //     "BIZCARD_ROOT_DIR": "/database",
+            // },
+            "env": {
+                "NORMALIZE_SRC_DIR": "/database/internal_batch1",
+                // "NORMALIZE_SRC_DIR": "/database/test",
+                "NORMALIZE_OCR_DIR": "/database/endpointga/internal_batch1",
+                "NORMALIZE_DST_DIR": "/database/TrainPartial",
+            },
+            // "env": {
+            //     "VALIDATE_SRC_DIR": "/database/business_card",
+            //     "VALIDATE_DST_DIR": "/database/Random",
+            // },
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
             "name": "main.py - train inpaint patch imagenet",
             "type": "python",
             "request": "launch",
@@ -327,6 +369,14 @@
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "justMyCode": true
-        }
+        },
+        {
+            "name": "scripts/load_pickle.py",
+            "type": "python",
+            "request": "launch",
+            "program": "scripts/load_pickle.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
     ]
 }

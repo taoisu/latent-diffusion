@@ -14,6 +14,7 @@ from azureml.core.runconfig import DockerConfiguration
 
 def main(
     cluster:str='DS-C8-M28',
+    # cluster:str='ND40rsv2-prod1', Taipei
     task:str='prep_laion2b_get'
 ):
     docker_config = DockerConfiguration(
@@ -41,6 +42,8 @@ def main(
         'train_avid_sr_128x512_effinet': 'cloud/entry_avid_train_sr_128x512-effinet.sh',
         'train_avid_sr_128x512_opainet': 'cloud/entry_avid_train_sr_128x512-opainet.sh',
         'train_avid_inpaint_128_t5xxl': 'cloud/entry_avid_train_inpaint_128-t5xxl.sh',
+        'train_bizcard_inpaint_128_t5xxl': 'cloud/entry_bizcard_train_inpaint_128-t5xxl.sh',
+        'train_bizcard_inpaint_512': 'cloud/entry_bizcard_train_inpaint_512.sh',
         'train_avid_inpaint_128_vitt10': 'cloud/entry_avid_train_inpaint_128-vitt10.sh',
         'train_avid_inpaint_128_hgvitl16-224': 'cloud/entry_avid_train_inpaint_128-hgvitl16-224.sh',
         'dbg': 'cloud/entry_dbg.sh',
