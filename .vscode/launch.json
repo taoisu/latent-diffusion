@@ -361,14 +361,6 @@
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "justMyCode": true
-        },
-        {
-            "name": "scripts/load_pickle.py",
-            "type": "python",
-            "request": "launch",
-            "program": "scripts/load_pickle.py",
-            "console": "integratedTerminal",
-            "justMyCode": true
-        },
+        }
     ]
 }
