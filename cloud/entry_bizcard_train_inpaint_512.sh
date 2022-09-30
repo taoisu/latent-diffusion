@@ -22,4 +22,3 @@ python3 main.py                                                                 
     --devices 0,1,2,3,4,5,6,7                                                   \
     -t                                                                          \
     -l "$LOG_DIR"
-#     -r "$LOG_DIR/2022-09-20T04-14-37_txtinpaintbizcard128_fsdp-fairscale-contactnames/checkpoints/last.ckpt"
