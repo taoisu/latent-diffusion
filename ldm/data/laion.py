@@ -6,8 +6,10 @@ import requests
 
 import albumentations as al
 import numpy as np
+import torchvision.transforms.functional as ttf
 
 from datasets import load_dataset
+from functools import partial
 from io import BytesIO
 from itertools import repeat
 from multiprocessing import Pool
@@ -17,6 +19,11 @@ from tqdm import tqdm
 from typing import Dict, Tuple
 
 from PIL import Image, ImageFile
+
+from ldm.modules.image_degradation import (
+    degradation_fn_bsr,
+    degradation_fn_bsr_light,
+)
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -114,6 +121,76 @@ class LaionTextToImageValidation(LaionTextToImage):
         vals = sorted(list(self.idx_map.values()))
         vals = vals[:num_items]
         self.idx_map = { k: vals[k] for k in range(len(vals)) }
+
+
+class LaionSuperRes(LaionTextToImage):
+
+    def __init__(
+        self,
+        name:str,
+        size:int,
+        lr_size:int,
+        dropout:float=0.0,
+        idx_map_name:str=None,
+        num_items:int=None,
+        degradation:str=None,
+    ):
+        '''
+        Laion Super Resolution Dataset
+
+        Performs the following ops:
+        1. center crops the image with size of min side len
+        2. resize the crop to the size
+        '''
+        super().__init__(
+            name=name,
+            size=size,
+            dropout=dropout,
+            idx_map_name=idx_map_name,
+        )
+        self.lr_size = lr_size
+        if num_items is not None:
+            vals = sorted(list(self.idx_map.values()))
+            vals = vals[:num_items]
+            self.idx_map = { k: vals[k] for k in range(len(vals)) }
+        self.pil_interpolation = False
+        downscale_f = size // lr_size
+        if degradation == 'bsrgan':
+            self.degradation_process = partial(degradation_fn_bsr, sf=downscale_f)
+        elif degradation == 'bsrgan_light':
+            self.degradation_process = partial(degradation_fn_bsr_light)
+        else:
+            interpolation_fn = {
+                "cv_nearest": cv2.INTER_NEAREST,
+                "cv_bilinear": cv2.INTER_LINEAR,
+                "cv_bicubic": cv2.INTER_CUBIC,
+                "cv_area": cv2.INTER_AREA,
+                "cv_lanczos": cv2.INTER_LANCZOS4,
+                "pil_nearest": Image.NEAREST,
+                "pil_bilinear": Image.BILINEAR,
+                "pil_bicubic": Image.BICUBIC,
+                "pil_box": Image.BOX,
+                "pil_hamming": Image.HAMMING,
+                "pil_lanczos": Image.LANCZOS,
+            }[degradation]
+            self.pil_interpolation = degradation.startswith("pil_")
+            if self.pil_interpolation:
+                self.degradation_process = partial(
+                    ttf.resize, size=self.lr_size, interpolation=interpolation_fn)
+            else:
+                self.degradation_process = al.SmallestMaxSize(
+                    max_size=self.lr_size, interpolation=interpolation_fn)
+
+    def prep_lr_image(self, image:np.ndarray):
+        image = ((image+1.0)*127.5).astype(np.uint8)
+        lr_image = self.degradation_process(image)['image']
+        lr_image = (lr_image/127.5-1.0).astype(np.float32)
+        return lr_image
+
+    def __getitem__(self, i:int):
+        item = super().__getitem__(i)
+        item['lr_image'] = self.prep_lr_image(item['image'])
+        return item
 
 
 def try_download(obj:Tuple):

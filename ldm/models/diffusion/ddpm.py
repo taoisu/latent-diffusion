@@ -38,6 +38,7 @@ from PIL import Image
 from ldm.modules.attention import BasicTransformerBlock, SpatialTransformer
 from ldm.modules.diffusionmodules.openaimodel import AttentionBlock, ResBlock, TimestepEmbedSequential
 from ldm.modules.encoders.modules import (
+    FrozenPretrainedSuperResEmbedder,
     FrozenPretrainedTextEmbedder,
     FrozenTextInpaintEmbedder,
     FrozenPretrainedMultiModalEmbedder,
@@ -903,7 +904,7 @@ class LatentDiffusion(DDPM):
             if cond_key != self.first_stage_key:
                 if cond_key in ['caption', 'coordinates_bbox']:
                     xc = batch[cond_key]
-                elif cond_key in ['class_label', 'patch', 'text', 'txt_image', 'multimodal']:
+                elif cond_key in ['class_label', 'patch', 'text', 'txt_image', 'multimodal', 'multimodal_sr']:
                     xc = batch
                 elif cond_key == 'lr_image':
                     xc = super().get_input(batch, cond_key).to(self.device)
@@ -1819,6 +1820,10 @@ class LatentDiffusion(DDPM):
                 xc = log_txt_as_img((x.shape[2], x.shape[3]), batch['text'])
                 log["conditioning_lang"] = xc
                 log["conditioning_vision"] = rearrange(batch["txt_image"], 'b h w c -> b c h w')
+            elif self.cond_stage_key == 'multimodal_sr':
+                xc = log_txt_as_img((x.shape[2], x.shape[3]), batch['caption'])
+                log["conditioning_lang"] = xc
+                log["conditioning_vision"] = rearrange(batch['lr_image'], 'b h w c -> b c h w')
             elif self.cond_stage_key == 'class_label':
                 xc = log_txt_as_img((x.shape[2], x.shape[3]), batch["human_label"])
                 log['conditioning'] = xc
@@ -1836,14 +1841,18 @@ class LatentDiffusion(DDPM):
             TextImageInpaintEmbedder,
             FrozenPretrainedImageEmbedder,
             FrozenPretrainedMultiModalEmbedder,
+            FrozenPretrainedSuperResEmbedder,
         )
         if isinstance(self.cond_stage_model, classes):
             if 'c_concat' in c:
                 cc_tsr = c['c_concat']
                 cc_tsr = cc_tsr if cc_tsr.shape[1] != 2 else cc_tsr[:,:1,...]
                 log['concat'] = cc_tsr
-            mask = 1 - rearrange(batch['mask'][:N], 'b h w c -> b c h w')
-            log["mask"] = mask.clone()*2-1
+            if 'mask' in batch:
+                mask = 1 - rearrange(batch['mask'][:N], 'b h w c -> b c h w')
+                log["mask"] = mask.clone()*2-1
+            else:
+                mask = None
             # inpaint w/ mask
             with self.ema_scope("Poltting Text Inpaint"):
                 samples, _ = self.sample_log(
@@ -1857,15 +1866,23 @@ class LatentDiffusion(DDPM):
             x_samples = self.decode_first_stage(samples.to(self.device))
             log["samples_text_inpaint"] = x_samples
 
-            if isinstance(self.cond_stage_model, (TextImageInpaintEmbedder, FrozenPretrainedImageEmbedder, FrozenPretrainedMultiModalEmbedder)):
+            if isinstance(self.cond_stage_model, (
+                TextImageInpaintEmbedder,
+                FrozenPretrainedImageEmbedder,
+                FrozenPretrainedMultiModalEmbedder,
+                FrozenPretrainedSuperResEmbedder,
+            )):
                 batch_uncond = deepcopy(batch)
-                batch_uncond['text'] = ['' for _ in batch_uncond['text']]
+                if 'text' in batch_uncond:
+                    batch_uncond['text'] = ['' for _ in batch_uncond['text']]
+                if 'caption' in batch_uncond:
+                    batch_uncond['caption'] = ['' for _ in batch_uncond['caption']]
                 if isinstance(self.cond_stage_model, (TextImageInpaintEmbedder, FrozenPretrainedImageEmbedder)):
                     batch_uncond['txt_image'] = [ Image.new(img.mode, img.size, 'white') for img in batch['txt_image'] ]
                 elif isinstance(self.cond_stage_model, (FrozenPretrainedMultiModalEmbedder,)):
                     batch_uncond['txt_image'] = torch.ones_like(batch_uncond['txt_image'])
                 _, uncond_c = self.get_input(batch_uncond, self.first_stage_key, force_c_encode=True, bs=N)
-                if isinstance(self.cond_stage_model, (FrozenPretrainedMultiModalEmbedder,)):
+                if isinstance(self.cond_stage_model, (FrozenPretrainedMultiModalEmbedder, FrozenPretrainedSuperResEmbedder)):
                     j = uncond_c['c_name'].index('lang')
                     c_lang_ca_shape, uncond_c_lang_ca_shape = c['c_crossattn'][j].shape, uncond_c['c_crossattn'][j].shape
                     diff = c_lang_ca_shape[1] - uncond_c_lang_ca_shape[1]

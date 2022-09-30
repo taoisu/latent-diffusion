@@ -170,6 +170,29 @@
             "justMyCode": false
         },
         {
+            "name": "main.py - train sr multimodal laion",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "args": [
+                "--scale_lr",
+                "false",
+                "--base",
+                "configs/just-diffusion/srlaion256x4_fsdp-fairscale-effinet-hgvitl16-224-t5xl.yaml",
+                "--accelerator",
+                "gpu",
+                "--devices",
+                "0,",
+                "-t",
+            ],
+            "env": {
+                "LAION_ROOT_DIR": "/mount/airocrhbi/ocr-data/Vertical/vdipainter/data",
+                "CUDA_LAUNCH_BLOCKING": "1",
+                "TOKENIZERS_PARALLELISM": "false"
+            },
+            "justMyCode": false
+        },
+        {
             "name": "main.py - train sr avid",
             "type": "python",
             "request": "launch",

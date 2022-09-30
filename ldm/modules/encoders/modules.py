@@ -293,6 +293,116 @@ class TextImageInpaintEmbedder(TextImageEmbedder):
         return ret
 
 
+class FrozenPretrainedSuperResEmbedder(AbstractEncoder):
+    '''
+    Use pretrained huggingface vision or language encoders
+
+    Support the following vision models:
+    * VitModel (google/vit-*)
+
+    Support the following language models:
+    * Not supported yet
+    '''
+    def __init__(
+        self,
+        vision_model_name:str=None,
+        lang_model_name:str=None,
+        with_concat:bool=True,
+        with_emb:bool=True,
+        with_crossattn:bool=True,
+    ):
+        super().__init__()
+        if vision_model_name is not None:
+            if vision_model_name.startswith('google/vit-'):
+                vision_model_class = ViTModel
+            else:
+                raise ValueError()
+            self.vision_model = vision_model_class.from_pretrained(vision_model_name)
+        else:
+            self.vision_model = None
+        if lang_model_name is not None:
+            if lang_model_name.startswith('google/t5-'):
+                lang_model_class = T5EncoderModel
+            else:
+                raise ValueError()
+            self.lang_model = lang_model_class.from_pretrained(lang_model_name)
+            self.lang_tknr = AutoTokenizer.from_pretrained(lang_model_name)
+        else:
+            self.lang_model, self.lang_tknr = None, None
+        self.with_concat = with_concat
+        self.with_emb = with_emb
+        self.with_crossattn = with_crossattn
+
+    def forward(self, img_tsr:Tensor=None, **kwargs):
+        ret = {}
+        if self.vision_model is not None:
+            ret['vision_out'] = self.vision_model(img_tsr)
+        if self.lang_model is not None:
+            ret['lang_out'] = self.lang_model(**kwargs)
+        return ret
+
+    def encode(self, cond:Dict):
+        ret = OrderedDict()
+        lr_img_tsr = rearrange(cond['lr_image'], 'b h w c -> b c h w')
+        inputs = {}
+        if self.vision_model is not None:
+            vis_sz = self.vision_model.config.image_size
+            _, _, h, w = lr_img_tsr.shape
+            vis_img_tsr = torch.clamp(F.interpolate(lr_img_tsr, (vis_sz, vis_sz), mode='bicubic'), min=-1, max=1)
+            inputs.update({ 'img_tsr': vis_img_tsr })
+        if self.lang_model is not None:
+            text = cond['caption']
+            lang_inputs = self.lang_tknr(
+                text,
+                padding='longest',
+                return_tensors='pt',
+                max_length=128,
+                truncation=True)
+            device = self.root_device if hasattr(self, 'root_device') else self.lang_model.device
+            for k in lang_inputs.keys():
+                lang_inputs[k] = lang_inputs[k].to(device)
+            inputs.update(lang_inputs)
+        output = self(**inputs)
+        if self.with_concat:
+            sz = cond['image'].shape[1]
+            cc_img_tsr = torch.clamp(F.interpolate(lr_img_tsr, (sz, sz), mode='bicubic'), min=-1, max=1)
+            ret.update({ 'c_concat': cc_img_tsr })
+        if self.with_emb:
+            ret['c_emb'] = []
+        if self.with_crossattn:
+            ret['c_crossattn'], ret['c_crossattn_mask'] = [], []
+        ret['c_name'] = []
+        if self.vision_model is not None:
+            vision_out = output['vision_out']
+            if self.with_emb:
+                ret['c_emb'].append(vision_out.pooler_output)
+            if self.with_crossattn:
+                ret['c_crossattn'].append(vision_out.last_hidden_state)
+                ret['c_crossattn_mask'].append(torch.ones_like(vision_out.last_hidden_state[..., 0], dtype=torch.long))
+            ret['c_name'].append('vision')
+        if self.lang_model is not None:
+            lang_out = output['lang_out']
+            if self.with_emb:
+                if isinstance(self.lang_model, T5EncoderModel):
+                    eos_hidden_state_pos = lang_inputs['attention_mask'].sum(dim=1) - 1
+                    batch_size = len(text)
+                    lang_pooler_out = lang_out.last_hidden_state[
+                        torch.arange(0, batch_size, device=device),
+                        eos_hidden_state_pos,
+                    ]
+                else:
+                    raise ValueError()
+                ret['c_emb'].append(lang_pooler_out)
+            if self.with_crossattn:
+                ret['c_crossattn'].append(lang_out.last_hidden_state)
+                ret['c_crossattn_mask'].append(inputs['attention_mask'])
+            ret['c_name'].append('lang')
+        return ret
+
+    def state_dict(self, *args, destination=None, prefix='', keep_vars=False):
+        return {}
+
+
 class FrozenPretrainedMultiModalEmbedder(AbstractEncoder):
     '''
     Use pretrained huggingface vision & language encoders
@@ -343,7 +453,6 @@ class FrozenPretrainedMultiModalEmbedder(AbstractEncoder):
         return ret
 
     def encode(self, cond:Dict):
-        cond_img_tsr = cond['txt_image']
         cond_img_tsr = rearrange(cond['txt_image'], 'b h w c -> b c h w')
         mask_tsr = rearrange(cond['mask'], 'b h w c -> b c h w')
         text = cond['text']
