@@ -76,6 +76,40 @@
             "justMyCode": true
         },
         {
+            "name": "ldm/data/bizcard.py",
+            "type": "python",
+            "request": "launch",
+            "program": "ldm/data/bizcard.py",
+            "args": [
+                "--mode",
+                "gen_normalized_img"
+            ],
+            "env": {
+                "NORMALIZE_SRC_DIR": "/database/internal_batch1",
+                "NORMALIZE_OCR_DIR": "/database/endpointga/internal_batch1",
+                "NORMALIZE_DST_DIR": "/database/TrainSuperRes",
+            },
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "ldm/data/bizcard.py partial",
+            "type": "python",
+            "request": "launch",
+            "program": "ldm/data/bizcard.py",
+            "args": [
+                "--mode",
+                "gen_partial_img"
+            ],
+            "env": {
+                "NORMALIZE_SRC_DIR": "/database/internal_batch1",
+                "NORMALIZE_OCR_DIR": "/database/endpointga/internal_batch1",
+                "NORMALIZE_DST_DIR": "/database/TrainPartial",
+            },
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
             "name": "main.py - train inpaint patch imagenet",
             "type": "python",
             "request": "launch",

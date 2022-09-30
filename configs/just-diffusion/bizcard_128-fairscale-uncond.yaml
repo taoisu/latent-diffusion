@@ -1,0 +1,69 @@
+model:
+  base_learning_rate: 5.0e-05
+  target: ldm.models.diffusion.ddpm.LatentDiffusion
+  params:
+    linear_start: 0.0015
+    linear_end: 0.012
+    beta_schedule: cosine
+    num_timesteps_cond: 1
+    log_every_t: 200
+    timesteps: 1000
+    loss_type: l2
+    first_stage_key: image
+    image_size: 128
+    channels: 3
+    cond_stage_trainable: false
+    monitor: val/loss_simple_ema
+    unet_config:
+      target: ldm.modules.diffusionmodules.openaimodel.UNetModel
+      params:
+        image_size: 128
+        in_channels: 3
+        out_channels: 3
+        model_channels: 160
+        attention_resolutions: [32, 16]
+        num_res_blocks: 3
+        channel_mult: [1, 2, 4, 4]
+        num_heads: 8
+        use_spatial_transformer: false
+        transformer_depth: 1
+        checkpoint: fairscale
+    first_stage_config:
+      target: ldm.models.autoencoder.IdentityFirstStage
+    cond_stage_config: "__is_unconditional__"
+data:
+  target: main.DataModuleFromConfig
+  params:
+    batch_size: 32
+    wrap: false
+    num_workers: 32
+    train:
+      target: ldm.data.bizcard.BizcardInpaintTrain
+      params:
+        size: 128
+        names: [Train]
+    validation:
+      target: ldm.data.bizcard.BizcardInpaintValidation
+      params:
+        size: 128
+lightning:
+  callbacks:
+    image_logger:
+      target: main.ImageLogger
+      params:
+        batch_frequency: 2500
+        increase_log_steps: false
+        max_images: 8
+        clamp: true
+        log_images_kwargs:
+          plot_diffusion_rows: true
+          plot_progressive_rows: false
+          inpaint: false
+          sample: true
+  modelcheckpoint:
+    params:
+      every_n_train_steps: 2500
+  trainer:
+    benchmark: True
+    max_epochs: -1
+    strategy: fsdp

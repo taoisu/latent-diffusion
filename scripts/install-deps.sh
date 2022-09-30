@@ -9,7 +9,8 @@ python3 -m pip install                              \
     fairscale einops transformers kornia numpy      \
     albumentations opencv-python pudb imageio       \
     imageio-ffmpeg omegaconf test-tube streamlit    \
-    fire accelerate
+    fire accelerate                                 \
+    azureml azureml.core azureml-sdk[notebooks]
 
 python3 -m pip install --pre torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/nightly/cu113 --force
 
